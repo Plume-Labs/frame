@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -101,7 +102,7 @@ type world struct {
 	broken map[string]bool // Deployments the kubelet never rolls out
 }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T, readyDeadline time.Duration) *world {
 	t.Helper()
 	ctx := context.Background()
 	w := &world{t: t, ns: fmt.Sprintf("su-%d", seq.Add(1)), broken: map[string]bool{}}
@@ -124,8 +125,9 @@ func newWorld(t *testing.T) *world {
 	}
 	w.op = &controller.FrameUpdateUpdaterReconciler{
 		Client: admin, Namespace: w.ns,
-		ReadyDeadline: 3 * time.Second, StableFor: 300 * time.Millisecond, Poll: 100 * time.Millisecond,
+		ReadyDeadline: readyDeadline, StableFor: 300 * time.Millisecond, Poll: 100 * time.Millisecond,
 	}
+	w.kubelet(t.Context())
 	return w
 }
 
@@ -173,7 +175,10 @@ func (w *world) release(version, controllerImg, updaterImg string, rollbackSafeT
 // kubelet marks every Deployment rolled out, as a node would, except the ones
 // named in broken, until ctx ends.
 func (w *world) kubelet(ctx context.Context) {
+	done := make(chan struct{})
+	w.t.Cleanup(func() { <-done })
 	go func() {
+		defer close(done)
 		for ctx.Err() == nil {
 			var l appsv1.DeploymentList
 			if err := admin.List(ctx, &l, client.InNamespace(w.ns)); err == nil {
@@ -264,15 +269,15 @@ func (w *world) image(deployment string) string {
 }
 
 func TestUpdateThenRollbackLeavesTheUpdaterAlone(t *testing.T) {
-	w := newWorld(t)
-	ctx := t.Context()
-	w.kubelet(ctx)
+	w := newWorld(t, 15*time.Second)
 
 	st := w.request("up", framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"})
 	if st.Phase != framev1beta1.UpdatePhaseSucceeded || st.Message != "" {
 		t.Fatalf("update: %+v", st)
 	}
-	if st.Updater == nil || st.Updater.State != framev1beta1.UpdaterReady {
+	// Ready only after it was seen ready for the stability window, never on the
+	// first healthy read.
+	if st.Updater == nil || st.Updater.State != framev1beta1.UpdaterReady || st.Updater.ReadySince == nil {
 		t.Fatalf("updater: %+v", st.Updater)
 	}
 	if w.image("operator") != image("controller", 2) || w.image("frame-updater") != image("updater", 2) {
@@ -292,9 +297,7 @@ func TestUpdateThenRollbackLeavesTheUpdaterAlone(t *testing.T) {
 }
 
 func TestAnUpdaterThatNeverGetsReadyIsRolledBackAndTheUpdateStillEnds(t *testing.T) {
-	w := newWorld(t)
-	ctx := t.Context()
-	w.kubelet(ctx)
+	w := newWorld(t, 3*time.Second)
 	w.breakDeployment("frame-updater")
 
 	st := w.request("up", framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"})
@@ -305,6 +308,10 @@ func TestAnUpdaterThatNeverGetsReadyIsRolledBackAndTheUpdateStillEnds(t *testing
 	if st.Updater == nil || st.Updater.State != framev1beta1.UpdaterRolledBack {
 		t.Fatalf("updater: %+v", st.Updater)
 	}
+	// FinishedAt has a one second resolution: allow for it.
+	if st.Updater.Since == nil || st.FinishedAt.Sub(st.Updater.Since.Time) < 2*time.Second {
+		t.Fatalf("rolled back before the deadline: since %v, finished %v", st.Updater.Since, st.FinishedAt)
+	}
 	if w.image("operator") != image("controller", 2) {
 		t.Fatalf("the operator should have been updated: %s", w.image("operator"))
 	}
@@ -314,33 +321,75 @@ func TestAnUpdaterThatNeverGetsReadyIsRolledBackAndTheUpdateStillEnds(t *testing
 }
 
 func TestAnImageNoVerifiedReleaseNamesIsNeverInstalled(t *testing.T) {
-	w := newWorld(t)
+	w := newWorld(t, 15*time.Second)
 	ctx := t.Context()
-	w.kubelet(ctx)
+	// A release that is not verified, and one that is withdrawn, each name an
+	// updater image: neither may be installed.
+	w.release("1.2.0", image("controller", 3), image("updater", 3))
+	w.unverify("1.2.0")
+	w.release("1.3.0", image("controller", 4), image("updater", 4))
+	w.revoke("1.3.0")
 
-	// Someone with the updater's token writes a request for an image of their own.
-	u := &framev1beta1.FrameUpdate{
-		ObjectMeta: metav1.ObjectMeta{Namespace: w.ns, Name: "forged"},
-		Spec:       framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"},
+	for name, c := range map[string]struct{ version, to string }{
+		"unverified": {"1.2.0", image("updater", 3)},
+		"revoked":    {"1.3.0", image("updater", 4)},
+		"unnamed":    {"1.1.0", image("updater", 99)},
+	} {
+		// Someone with the updater's token writes a request for an image of their own.
+		u := &framev1beta1.FrameUpdate{
+			ObjectMeta: metav1.ObjectMeta{Namespace: w.ns, Name: name},
+			Spec:       framev1beta1.FrameUpdateSpec{TargetVersion: c.version},
+		}
+		if err := admin.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		u.Status.Phase = framev1beta1.UpdatePhaseApplying
+		u.Status.Updater = &framev1beta1.UpdaterStatus{To: c.to, State: framev1beta1.UpdaterPending}
+		if err := admin.Status().Update(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		req := ctrl.Request{}
+		req.Namespace, req.Name = w.ns, name
+		if _, err := w.op.Reconcile(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+		var cur framev1beta1.FrameUpdate
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(u), &cur); err != nil {
+			t.Fatal(err)
+		}
+		got := cur.Status.Updater
+		if got.State != framev1beta1.UpdaterFailed || !strings.Contains(got.Message, "verified release") {
+			t.Errorf("%s: %+v", name, got)
+		}
+		if w.image("frame-updater") != image("updater", 1) {
+			t.Fatalf("%s: updater image %s", name, w.image("frame-updater"))
+		}
 	}
-	if err := admin.Create(ctx, u); err != nil {
-		t.Fatal(err)
+}
+
+func (w *world) unverify(version string) {
+	w.t.Helper()
+	r := w.getRelease(version)
+	r.Status.Verified = false
+	if err := admin.Status().Update(context.Background(), r); err != nil {
+		w.t.Fatal(err)
 	}
-	u.Status.Phase = framev1beta1.UpdatePhaseApplying
-	u.Status.Updater = &framev1beta1.UpdaterStatus{To: image("updater", 99), State: framev1beta1.UpdaterPending}
-	if err := admin.Status().Update(ctx, u); err != nil {
-		t.Fatal(err)
+}
+
+func (w *world) revoke(version string) {
+	w.t.Helper()
+	r := w.getRelease(version)
+	r.Spec.Revoked = true
+	if err := admin.Update(context.Background(), r); err != nil {
+		w.t.Fatal(err)
 	}
-	req := ctrl.Request{}
-	req.Namespace, req.Name = w.ns, "forged"
-	if _, err := w.op.Reconcile(ctx, req); err != nil {
-		t.Fatal(err)
+}
+
+func (w *world) getRelease(version string) *framev1beta1.FrameRelease {
+	w.t.Helper()
+	var r framev1beta1.FrameRelease
+	if err := admin.Get(context.Background(), client.ObjectKey{Namespace: w.ns, Name: "r-" + version}, &r); err != nil {
+		w.t.Fatal(err)
 	}
-	var cur framev1beta1.FrameUpdate
-	if err := admin.Get(ctx, client.ObjectKeyFromObject(u), &cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur.Status.Updater.State != framev1beta1.UpdaterFailed || w.image("frame-updater") != image("updater", 1) {
-		t.Fatalf("%+v, updater image %s", cur.Status.Updater, w.image("frame-updater"))
-	}
+	return &r
 }
