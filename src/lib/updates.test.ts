@@ -97,3 +97,97 @@ describe('another application', () => {
     expect(out.split('\n').filter((l) => l.startsWith('rm'))).toEqual([])
   })
 })
+
+import { activeRequest, availableRelease, compareVersions, currentVersion, rollbackTarget } from './updates'
+import type { ReleaseView, UpdateRequestView } from './frame-sdk'
+
+const rel = (version: string, over: Partial<ReleaseView> = {}): ReleaseView => ({
+  name: `r-${version}`, version, channel: version.includes('-') ? 'beta' : 'stable', images: { ui: `ui@${version}` },
+  minFrom: '', rollbackSafeTo: '', notes: '', revoked: false, verified: true, publishedAt: '', ...over,
+})
+const req = (over: Partial<UpdateRequestView>): UpdateRequestView => ({
+  name: 'u', createdAt: '2026-11-26T10:00:00Z', targetVersion: '', rollback: false, force: false, phase: 'Succeeded',
+  step: '', message: '', fromVersion: '', requestedBy: '', startedAt: '', finishedAt: '', components: [], ...over,
+})
+
+describe('compareVersions', () => {
+  it('follows the semver.org ordering', () => {
+    const asc = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0', '1.0.1', '1.1.0', '2.0.0']
+    for (let i = 0; i < asc.length; i++) for (let j = 0; j < asc.length; j++) {
+      expect(Math.sign(compareVersions(asc[i], asc[j]))).toBe(Math.sign(i - j))
+    }
+  })
+  it('says NaN for what is not a version', () => {
+    expect(compareVersions('latest', '1.0.0')).toBeNaN()
+    expect(compareVersions('v1.0.0', '1.0.0')).toBeNaN()
+  })
+})
+
+describe('availableRelease', () => {
+  const all = [rel('1.0.0'), rel('1.1.0'), rel('1.2.0', { revoked: true }), rel('1.3.0', { verified: false }), rel('1.4.0-beta.1')]
+  it('offers the newest verified, not-withdrawn release newer than what runs', () => {
+    expect(availableRelease(all, '1.0.0', 'stable')?.version).toBe('1.1.0')
+  })
+  it('never offers a revoked or unverified release', () => {
+    expect(availableRelease([rel('1.2.0', { revoked: true }), rel('1.3.0', { verified: false })], '1.0.0', 'stable')).toBeNull()
+  })
+  it('keeps pre-releases to the beta channel', () => {
+    expect(availableRelease(all, '1.1.0', 'stable')).toBeNull()
+    expect(availableRelease(all, '1.1.0', 'beta')?.version).toBe('1.4.0-beta.1')
+  })
+  it('offers nothing when already on the newest', () => {
+    expect(availableRelease(all, '1.1.0', 'stable')).toBeNull()
+  })
+  it('offers the newest when the running version is unknown', () => {
+    expect(availableRelease(all, '', 'stable')?.version).toBe('1.1.0')
+  })
+})
+
+describe('currentVersion', () => {
+  const releases = [rel('1.0.0'), rel('1.1.0')]
+  it('is the release whose images the last successful request left in place', () => {
+    const r = req({ components: [{ name: 'ui', from: 'ui@1.0.0', to: 'ui@1.1.0', state: 'Ready' }] })
+    expect(currentVersion([r], releases)).toBe('1.1.0')
+  })
+  it('uses the running images when a later release reuses the same image', () => {
+    const rels = [rel('1.0.0', { images: { ui: 'ui@a', api: 'api@a' } }), rel('1.1.0', { images: { ui: 'ui@b', api: 'api@b' } }), rel('1.2.0', { images: { ui: 'ui@b', api: 'api@c' } })]
+    const r = req({ components: [{ name: 'ui', from: 'ui@a', to: 'ui@b', state: 'Ready' }] })
+    expect(currentVersion([r], rels, ['ui@b', 'api@b'])).toBe('1.1.0')
+  })
+  it('is empty rather than wrong when history cannot tell two releases apart', () => {
+    const rels = [rel('1.1.0', { images: { ui: 'ui@b' } }), rel('1.2.0', { images: { ui: 'ui@b' } })]
+    expect(currentVersion([req({ components: [{ name: 'ui', from: 'x', to: 'ui@b', state: 'Ready' }] })], rels)).toBe('')
+  })
+  it('ignores a failed or rolled-back request, and is empty with no history', () => {
+    const failed = req({ phase: 'RolledBack', components: [{ name: 'ui', from: 'ui@1.0.0', to: 'ui@1.1.0', state: 'RolledBack' }] })
+    expect(currentVersion([failed], releases)).toBe('')
+    expect(currentVersion([], releases)).toBe('')
+  })
+})
+
+describe('activeRequest', () => {
+  it('finds a request the updater has not finished, including one it has not picked up yet', () => {
+    expect(activeRequest([req({ phase: '' })])?.phase).toBe('')
+    expect(activeRequest([req({ phase: 'Applying' }), req({ phase: 'Succeeded' })])?.phase).toBe('Applying')
+    expect(activeRequest([req({ phase: 'Succeeded' }), req({ phase: 'Refused' })])).toBeNull()
+  })
+})
+
+describe('rollbackTarget', () => {
+  const releases = [rel('1.0.0'), rel('1.1.0', { rollbackSafeTo: '1.0.0' }), rel('1.2.0')]
+  const up = req({ fromVersion: '1.0.0' })
+  it('offers the version before the last update when the running release allows it', () => {
+    expect(rollbackTarget([up], releases, '1.1.0')).toBe('1.0.0')
+  })
+  it('offers nothing when the running release does not offer a rollback, or the floor is higher', () => {
+    expect(rollbackTarget([up], releases, '1.2.0')).toBeNull()
+    expect(rollbackTarget([req({ fromVersion: '0.9.0' })], releases, '1.1.0')).toBeNull()
+  })
+  it('offers nothing right after a rollback', () => {
+    expect(rollbackTarget([req({ rollback: true, fromVersion: '1.1.0' }), up], releases, '1.0.0')).toBeNull()
+  })
+  it('offers nothing without a known version or a previous one', () => {
+    expect(rollbackTarget([up], releases, '')).toBeNull()
+    expect(rollbackTarget([], releases, '1.1.0')).toBeNull()
+  })
+})
