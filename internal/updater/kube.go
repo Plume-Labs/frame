@@ -28,6 +28,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Workload kinds the updater may patch.
+const (
+	kindDeployment = "Deployment"
+	kindDaemonSet  = "DaemonSet"
+)
+
 // Workload says where a component runs: the object to patch and the container
 // inside it. This table is the updater's whole write surface (spec §4.8): it can
 // change the image of these containers and nothing else.
@@ -42,12 +48,12 @@ type Workload struct {
 // install. ui and uiproxy are two containers of one Deployment.
 func DefaultWorkloads() map[string]Workload {
 	return map[string]Workload{
-		"controller": {Kind: "Deployment", Namespace: "frame-system", Name: "frame-controller-manager", Container: "manager"},
-		"provisiond": {Kind: "Deployment", Namespace: "frame-system", Name: "frame-provisiond", Container: "provisiond"},
-		"authd":      {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-auth", Container: "authd"},
-		"uiproxy":    {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-ui", Container: "uiproxy"},
-		"ui":         {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-ui", Container: "ui"},
-		"agent":      {Kind: "DaemonSet", Namespace: "kube-system", Name: "frame-node-tuning-agent", Container: "agent"},
+		"controller": {Kind: kindDeployment, Namespace: "frame-system", Name: "frame-controller-manager", Container: "manager"},
+		"provisiond": {Kind: kindDeployment, Namespace: "frame-system", Name: "frame-provisiond", Container: "provisiond"},
+		"authd":      {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-auth", Container: "authd"},
+		"uiproxy":    {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-ui", Container: "uiproxy"},
+		"ui":         {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-ui", Container: "ui"},
+		"agent":      {Kind: kindDaemonSet, Namespace: "kube-system", Name: "frame-node-tuning-agent", Container: "agent"},
 	}
 }
 
@@ -84,7 +90,7 @@ func (k *KubeCluster) SetImage(ctx context.Context, component, image string) err
 	}
 	key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
 	switch w.Kind {
-	case "Deployment":
+	case kindDeployment:
 		var d appsv1.Deployment
 		if err := k.Client.Get(ctx, key, &d); err != nil {
 			return err
@@ -94,7 +100,7 @@ func (k *KubeCluster) SetImage(ctx context.Context, component, image string) err
 			return fmt.Errorf("deployment %s has no container %q", key, w.Container)
 		}
 		return k.Client.Patch(ctx, &d, client.StrategicMergeFrom(base))
-	case "DaemonSet":
+	case kindDaemonSet:
 		var ds appsv1.DaemonSet
 		if err := k.Client.Get(ctx, key, &ds); err != nil {
 			return err
@@ -145,7 +151,7 @@ func (k *KubeCluster) WaitReady(ctx context.Context, component string) error {
 func (k *KubeCluster) rolledOut(ctx context.Context, w Workload) (bool, string, error) {
 	key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
 	switch w.Kind {
-	case "Deployment":
+	case kindDeployment:
 		var d appsv1.Deployment
 		if err := k.Client.Get(ctx, key, &d); err != nil {
 			return false, "", err
@@ -166,7 +172,7 @@ func (k *KubeCluster) rolledOut(ctx context.Context, w Workload) (bool, string, 
 			return false, fmt.Sprintf("%d of %d replicas ready", s.ReadyReplicas, want), nil
 		}
 		return true, "", nil
-	case "DaemonSet":
+	case kindDaemonSet:
 		var ds appsv1.DaemonSet
 		if err := k.Client.Get(ctx, key, &ds); err != nil {
 			return false, "", err
@@ -204,7 +210,7 @@ func (k *KubeCluster) Running(ctx context.Context) ([]Running, error) {
 		key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
 		var containers []corev1.Container
 		switch w.Kind {
-		case "Deployment":
+		case kindDeployment:
 			var d appsv1.Deployment
 			if err := k.Client.Get(ctx, key, &d); err != nil {
 				if apierrors.IsNotFound(err) {
@@ -213,7 +219,7 @@ func (k *KubeCluster) Running(ctx context.Context) ([]Running, error) {
 				return nil, err
 			}
 			containers = d.Spec.Template.Spec.Containers
-		case "DaemonSet":
+		case kindDaemonSet:
 			var ds appsv1.DaemonSet
 			if err := k.Client.Get(ctx, key, &ds); err != nil {
 				if apierrors.IsNotFound(err) {

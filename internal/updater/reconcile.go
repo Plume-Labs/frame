@@ -29,6 +29,9 @@ import (
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
+// stateReady is a component that finished its step and passed its health gate.
+const stateReady = "Ready"
+
 // WorkCluster is what the reconciler needs of the cluster: the executor's two
 // calls plus a read of what runs now.
 type WorkCluster interface {
@@ -304,7 +307,7 @@ func runningFrom(from Release, now []Running) []Running {
 func appliedFrom(u *framev1beta1.FrameUpdate) []string {
 	var out []string
 	for _, c := range u.Status.Components {
-		if c.State == "Ready" {
+		if c.State == stateReady {
 			out = append(out, c.Name)
 		}
 	}
@@ -331,7 +334,7 @@ func componentStatuses(p Plan, applied []string, inStep string) []framev1beta1.U
 		st := "Pending"
 		switch {
 		case done[s.Component]:
-			st = "Ready"
+			st = stateReady
 		case s.Component == inStep:
 			st = "Applying"
 		}
@@ -358,7 +361,7 @@ func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, 
 		c := &cur.Status.Components[i]
 		switch {
 		case phase == framev1beta1.UpdatePhaseSucceeded:
-			c.State = "Ready"
+			c.State = stateReady
 		case phase == framev1beta1.UpdatePhaseRolledBack && c.State != "Pending":
 			c.State = "RolledBack"
 		case phase == framev1beta1.UpdatePhaseFailed && c.State == "Applying":

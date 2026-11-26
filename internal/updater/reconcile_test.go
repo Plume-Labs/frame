@@ -86,10 +86,10 @@ func newRecFixture(t *testing.T, uiReady int32, extra ...client.Object) recFixtu
 	return recFixture{c: c, r: &Reconciler{Client: c, Cluster: k, Namespace: ns, Now: func() time.Time { return time.Unix(1700000000, 0) }}}
 }
 
-func (f recFixture) status(t *testing.T, name string) framev1beta1.FrameUpdateStatus {
+func (f recFixture) status(t *testing.T) framev1beta1.FrameUpdateStatus {
 	t.Helper()
 	var u framev1beta1.FrameUpdate
-	if err := f.c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &u); err != nil {
+	if err := f.c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "u1"}, &u); err != nil {
 		t.Fatal(err)
 	}
 	return u.Status
@@ -112,7 +112,7 @@ func TestReconcileAppliesAVerifiedUpdate(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	st := f.status(t, "u1")
+	st := f.status(t)
 	if st.Phase != framev1beta1.UpdatePhaseSucceeded || st.FromVersion != "1.0.0" {
 		t.Fatalf("status = %+v", st)
 	}
@@ -132,7 +132,7 @@ func TestReconcileRefusesAnUnverifiedReleaseAndTouchesNothing(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	st := f.status(t, "u1")
+	st := f.status(t)
 	if st.Phase != framev1beta1.UpdatePhaseRefused || !strings.Contains(st.Message, RefusedUnverified) {
 		t.Fatalf("status = %+v", st)
 	}
@@ -148,7 +148,7 @@ func TestReconcileRevertsWhenTheHealthGateFails(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	st := f.status(t, "u1")
+	st := f.status(t)
 	// The revert cannot get healthy either, so the honest outcome is Failed with a message.
 	if st.Phase != framev1beta1.UpdatePhaseFailed || !strings.Contains(st.Message, "manual intervention") {
 		t.Fatalf("status = %+v", st)
@@ -166,7 +166,7 @@ func TestReconcileWaitsBehindAnUpdateInProgress(t *testing.T) {
 	if err != nil || after == 0 {
 		t.Fatalf("after=%v err=%v", after, err)
 	}
-	if f.status(t, "u1").Phase != "" {
+	if f.status(t).Phase != "" {
 		t.Fatal("a queued request was started")
 	}
 }
@@ -176,7 +176,7 @@ func TestReconcileServesTheOldestRequestFirst(t *testing.T) {
 		updateReq("u0", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}),
 		updateReq("u1", t0.Add(time.Minute), framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}))
 	after, _ := f.r.Reconcile(context.Background(), "u1")
-	if after == 0 || f.status(t, "u1").Phase != "" {
+	if after == 0 || f.status(t).Phase != "" {
 		t.Fatal("the newer request jumped the queue")
 	}
 }
@@ -187,7 +187,7 @@ func TestReconcileLeavesDecidedRequestsAlone(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if f.uiImage(t) != "ui@1.0.0,proxy@1.0.0" || f.status(t, "u1").Message != "x" {
+	if f.uiImage(t) != "ui@1.0.0,proxy@1.0.0" || f.status(t).Message != "x" {
 		t.Fatal("a decided request was acted on again")
 	}
 }
@@ -208,7 +208,7 @@ func TestReconcileRollsBackToThePreviousVersion(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseSucceeded {
+	if st := f.status(t); st.Phase != framev1beta1.UpdatePhaseSucceeded {
 		t.Fatalf("status = %+v", st)
 	}
 	if got := f.uiImage(t); got != "ui@1.0.0,proxy@1.0.0" {
@@ -243,7 +243,7 @@ func TestReconcileResumesAnInterruptedUpdate(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseSucceeded {
+	if st := f.status(t); st.Phase != framev1beta1.UpdatePhaseSucceeded {
 		t.Fatalf("status = %+v", st)
 	}
 	if got := f.uiImage(t); got != "ui@1.0.0,proxy@1.1.0" {
@@ -261,7 +261,7 @@ func TestReconcileDoesNotReportRefusedWhenAnInterruptedUpdateCannotResume(t *tes
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	st := f.status(t, "u1")
+	st := f.status(t)
 	if st.Phase != framev1beta1.UpdatePhaseFailed || !strings.Contains(st.Message, "by hand") {
 		t.Fatalf("status = %+v", st)
 	}
@@ -273,7 +273,7 @@ func TestReconcileFailsHonestlyAfterAnInterruptedRevert(t *testing.T) {
 	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseFailed {
+	if st := f.status(t); st.Phase != framev1beta1.UpdatePhaseFailed {
 		t.Fatalf("status = %+v", st)
 	}
 }
@@ -286,7 +286,7 @@ func TestReconcileLeavesAnInterruptedRunForTheNextStart(t *testing.T) {
 	if _, err := f.r.Reconcile(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseApplying {
+	if st := f.status(t); st.Phase != framev1beta1.UpdatePhaseApplying {
 		t.Fatalf("an interrupted update was decided: %+v", st)
 	}
 }
