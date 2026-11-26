@@ -85,9 +85,12 @@ type Step struct {
 
 // Plan is the outcome: either the ordered steps, or why not.
 type Plan struct {
-	Target  string
-	Steps   []Step
-	Refusal *Refusal
+	Target string
+	// Rollback is true when the plan returns to the previous version: a failure
+	// then stops instead of reverting, so two versions never chase each other.
+	Rollback bool
+	Steps    []Step
+	Refusal  *Refusal
 }
 
 func refuse(target, code string, overridable bool, format string, a ...any) Plan {
@@ -181,5 +184,5 @@ func BuildPlan(in Input) Plan {
 	if len(steps) == 0 {
 		return refuse(target, RefusedNothingToChange, false, "every component already runs the images of %s", target)
 	}
-	return Plan{Target: target, Steps: steps}
+	return Plan{Target: target, Rollback: in.Request.Rollback, Steps: steps}
 }
