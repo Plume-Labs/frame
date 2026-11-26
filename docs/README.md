@@ -36,7 +36,7 @@ Bare-metal IaC (deploy/)
 ```
 
 - **Control plane** (`src/`) — React UI + TypeScript SDK. Both talk **directly to the Kubernetes API** — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
-- **Operator** (`internal/`) — Kubebuilder v4 controllers (`internal/controller/`, plus `internal/alerting/`) for the CRDs that need reconciling, across two API groups. Not every kind is reconciled: FrameUser is a record `authd` reads and FrameTask is a proxy-written audit trail. Five more Go binaries ship with it: `cmd/authd` (per-user auth), `cmd/agent` (the node-tuning agent DaemonSet), `cmd/uiproxy` (the in-pod proxy that carries the user's identity), `cmd/provisiond` (machine provisioning) and `cmd/bootstrap` (installs node zero from a laptop).
+- **Operator** (`internal/`) — Kubebuilder v4 controllers (`internal/controller/`, plus `internal/alerting/`) for the CRDs that need reconciling, across two API groups. Not every kind is reconciled: FrameUser is a record `authd` reads and FrameTask is a proxy-written audit trail. Six more Go binaries ship with it: `cmd/authd` (per-user auth), `cmd/agent` (the node-tuning agent DaemonSet), `cmd/uiproxy` (the in-pod proxy that carries the user's identity), `cmd/provisiond` (machine provisioning), `cmd/updater` (the in-cluster one-click update, which applies a `FrameUpdate` to a signed `FrameRelease`) and `cmd/bootstrap` (installs node zero from a laptop).
 - **IaC** (`deploy/`) — Ceph (RGW) storage, Cilium RDMA networking, caching (Alluxio, NVMe burst buffer), resilience (Velero), GitOps, and Argo Workflows manifests.
 
 ## Scope
