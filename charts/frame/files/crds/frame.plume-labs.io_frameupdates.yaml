@@ -181,6 +181,12 @@ spec:
                       must stay so for a while before the update is called done.
                     format: date-time
                     type: string
+                  requestedAt:
+                    description: |-
+                      RequestedAt is when the updater asked. A request the operator has not
+                      settled long after it was made is given up on by the updater.
+                    format: date-time
+                    type: string
                   since:
                     description: Since is when the operator started applying To.
                     format: date-time

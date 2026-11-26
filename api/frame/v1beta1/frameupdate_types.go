@@ -103,6 +103,10 @@ type UpdaterStatus struct {
 	// +kubebuilder:validation:Enum=Pending;Applying;RollingBack;Ready;RolledBack;Failed
 	// +optional
 	State string `json:"state,omitempty"`
+	// RequestedAt is when the updater asked. A request the operator has not
+	// settled long after it was made is given up on by the updater.
+	// +optional
+	RequestedAt *metav1.Time `json:"requestedAt,omitempty"`
 	// Since is when the operator started applying To.
 	// +optional
 	Since *metav1.Time `json:"since,omitempty"`
