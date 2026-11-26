@@ -66,6 +66,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 	case framev1beta1.UpdatePhaseSucceeded, framev1beta1.UpdatePhaseRolledBack,
 		framev1beta1.UpdatePhaseRefused, framev1beta1.UpdatePhaseFailed:
 		return 0, nil
+	case framev1beta1.UpdatePhaseApplying:
+		if upd.Status.Updater != nil {
+			// Everything this process applies is done: what is left is the
+			// updater's own image, which the operator applies. A restart of
+			// this process (it is the thing being replaced) lands here.
+			return r.waitForUpdater(ctx, &upd)
+		}
 	case framev1beta1.UpdatePhaseRollingBack:
 		// A revert cut short by a restart cannot be resumed with certainty which
 		// image each component holds: say so instead of guessing.
@@ -138,15 +145,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 			"the update was interrupted and cannot resume ("+plan.Refusal.Code+": "+plan.Refusal.Message+"): check each component's image and ready state by hand")
 	}
 	if plan.Refusal != nil && plan.Refusal.Code == RefusedNothingToChange && !resuming &&
-		releases[plan.Target].Images[UpdaterComponent] != "" {
+		askForUpdater(releases[plan.Target]) != nil {
 		// Only the updater differs (or an earlier attempt on it rolled back): there
 		// is nothing for this process to apply, and the operator is asked for it.
 		now := metav1.NewTime(r.now())
-		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseSucceeded, "only the updater changes", append(
-			askForUpdater(releases[plan.Target]), func(s *framev1beta1.FrameUpdateStatus) {
-				s.FromVersion = in.Current
-				s.StartedAt = &now
-			})...)
+		upd.Status.Phase = framev1beta1.UpdatePhaseApplying
+		upd.Status.FromVersion = in.Current
+		upd.Status.StartedAt = &now
+		upd.Status.Step = "Applying updater"
+		upd.Status.Updater = askForUpdater(releases[plan.Target])
+		return 10 * time.Second, r.Client.Status().Update(ctx, &upd)
 	}
 	if plan.Refusal != nil {
 		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseRefused,
@@ -171,26 +179,55 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 		// restart resumes from it.
 		return 5 * time.Second, nil
 	}
-	var also []func(*framev1beta1.FrameUpdateStatus)
-	if final.Phase == PhaseSucceeded {
-		also = askForUpdater(releases[plan.Target])
+	if req := askForUpdater(releases[plan.Target]); final.Phase == PhaseSucceeded && req != nil {
+		// Not finished yet: the updater's own image is still to be applied. The
+		// request and "still applying" are one write, so the operator never starts
+		// on the updater while this update reads as done.
+		return 10 * time.Second, r.awaitUpdater(ctx, key, plan, final, req)
 	}
-	return 0, r.finish(ctx, &upd, mapPhase(final.Phase), final.Message, also...)
+	return 0, r.finish(ctx, &upd, mapPhase(final.Phase), final.Message)
 }
 
-// askForUpdater asks the operator to apply the updater image the release names,
-// in the same write that ends the update, so that the operator never starts on
-// the updater while this update still reads as in progress. The updater cannot
-// do it itself: the process that drives the update would be replaced in the
-// middle of it.
-func askForUpdater(rel Release) []func(*framev1beta1.FrameUpdateStatus) {
+func (r *Reconciler) awaitUpdater(ctx context.Context, key types.NamespacedName, p Plan, final State, req *framev1beta1.UpdaterStatus) error {
+	ctx = context.WithoutCancel(ctx)
+	var cur framev1beta1.FrameUpdate
+	if err := r.Client.Get(ctx, key, &cur); err != nil {
+		return err
+	}
+	base := cur.DeepCopy()
+	cur.Status.Step = "Applying updater"
+	cur.Status.Components = componentStatuses(p, final.Applied, "")
+	cur.Status.Updater = req
+	return r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
+}
+
+// waitForUpdater ends the update once the operator has decided about the
+// updater's own image. The other components are updated either way, so a new
+// updater that did not become ready is a success with a message, not a failure.
+func (r *Reconciler) waitForUpdater(ctx context.Context, upd *framev1beta1.FrameUpdate) (time.Duration, error) {
+	u := upd.Status.Updater
+	switch u.State {
+	case framev1beta1.UpdaterReady:
+		return 0, r.finish(ctx, upd, framev1beta1.UpdatePhaseSucceeded, "")
+	case framev1beta1.UpdaterRolledBack:
+		return 0, r.finish(ctx, upd, framev1beta1.UpdatePhaseSucceeded,
+			"the other components are updated; the new updater did not become ready and the previous one is back")
+	case framev1beta1.UpdaterFailed:
+		return 0, r.finish(ctx, upd, framev1beta1.UpdatePhaseSucceeded,
+			"the other components are updated; the updater itself was not updated: "+u.Message)
+	}
+	return 10 * time.Second, nil
+}
+
+// askForUpdater is the request to the operator to apply the updater image the
+// release names, nil when it names none. The updater cannot apply it itself:
+// the process that drives the update would be replaced in the middle of it.
+func askForUpdater(rel Release) *framev1beta1.UpdaterStatus {
 	img := rel.Images[UpdaterComponent]
 	if img == "" {
 		return nil
 	}
-	return []func(*framev1beta1.FrameUpdateStatus){func(s *framev1beta1.FrameUpdateStatus) {
-		s.Updater = &framev1beta1.UpdaterStatus{To: img, State: framev1beta1.UpdaterPending}
-	}}
+	return &framev1beta1.UpdaterStatus{To: img, State: framev1beta1.UpdaterPending}
 }
 
 func (r *Reconciler) now() time.Time {
@@ -386,7 +423,7 @@ func componentStatuses(p Plan, applied []string, inStep string) []framev1beta1.U
 
 // finish writes the end of a request. It runs even when the caller's context
 // has ended: an outcome that is known must not be lost.
-func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, phase, msg string, also ...func(*framev1beta1.FrameUpdateStatus)) error {
+func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, phase, msg string) error {
 	ctx = context.WithoutCancel(ctx)
 	var cur framev1beta1.FrameUpdate
 	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(upd), &cur); err != nil {
@@ -398,9 +435,6 @@ func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, 
 	cur.Status.Step = ""
 	cur.Status.Message = truncate(msg, 1024)
 	cur.Status.FinishedAt = &now
-	for _, f := range also {
-		f(&cur.Status)
-	}
 	for i := range cur.Status.Components {
 		c := &cur.Status.Components[i]
 		switch {

@@ -321,8 +321,8 @@ func TestReconcileAsksTheOperatorToApplyTheUpdaterImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := f.status(t)
-	if st.Phase != framev1beta1.UpdatePhaseSucceeded {
-		t.Fatalf("status = %+v", st)
+	if st.Phase != framev1beta1.UpdatePhaseApplying || st.Step != "Applying updater" {
+		t.Fatalf("the update is not over while the updater is still to be applied: %+v", st)
 	}
 	if st.Updater == nil || st.Updater.To != newUpdaterImage || st.Updater.State != framev1beta1.UpdaterPending {
 		t.Fatalf("updater request = %+v", st.Updater)
@@ -355,7 +355,7 @@ func TestReconcileUpdaterOnlyReleaseIsNotNothingToChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := f.status(t)
-	if st.Phase != framev1beta1.UpdatePhaseSucceeded || st.Updater == nil || st.Updater.To != newUpdaterImage {
+	if st.Phase != framev1beta1.UpdatePhaseApplying || st.Updater == nil || st.Updater.To != newUpdaterImage {
 		t.Fatalf("status = %+v", st)
 	}
 }
@@ -372,5 +372,44 @@ func TestReconcileWaitsWhileTheOperatorReplacesTheUpdater(t *testing.T) {
 	}
 	if got := f.uiImage(t); got != "ui@1.0.0,proxy@1.0.0" {
 		t.Fatalf("images = %s", got)
+	}
+}
+
+func TestReconcileEndsWhenTheOperatorHasDecidedAboutTheUpdater(t *testing.T) {
+	cases := map[string]struct {
+		state   string
+		message string
+		wait    bool
+	}{
+		"pending":      {framev1beta1.UpdaterPending, "", true},
+		"applying":     {framev1beta1.UpdaterApplying, "", true},
+		"rolling back": {framev1beta1.UpdaterRollingBack, "", true},
+		"ready":        {framev1beta1.UpdaterReady, "", false},
+		"rolled back":  {framev1beta1.UpdaterRolledBack, "previous one is back", false},
+		"failed":       {framev1beta1.UpdaterFailed, "was not updated", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+				updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{
+					Phase: framev1beta1.UpdatePhaseApplying, FromVersion: "1.0.0",
+					Updater: &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: c.state}}))
+			after, err := f.r.Reconcile(context.Background(), "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := f.status(t)
+			if c.wait {
+				if after == 0 || st.Phase != framev1beta1.UpdatePhaseApplying {
+					t.Fatalf("after=%v status=%+v", after, st)
+				}
+				return
+			}
+			// The other components are updated either way: a success, with the
+			// reason when the updater itself was not.
+			if st.Phase != framev1beta1.UpdatePhaseSucceeded || !strings.Contains(st.Message, c.message) {
+				t.Fatalf("status=%+v", st)
+			}
+		})
 	}
 }
