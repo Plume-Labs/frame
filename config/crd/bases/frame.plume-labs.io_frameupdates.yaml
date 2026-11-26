@@ -164,6 +164,45 @@ spec:
                   uiproxy").
                 maxLength: 200
                 type: string
+              updater:
+                description: Updater is the updater's own update, applied by the operator.
+                properties:
+                  from:
+                    description: From is the image the updater ran before; written
+                      by the operator.
+                    maxLength: 512
+                    type: string
+                  message:
+                    maxLength: 1024
+                    type: string
+                  readySince:
+                    description: |-
+                      ReadySince is when the new updater was first seen ready and still is: it
+                      must stay so for a while before the update is called done.
+                    format: date-time
+                    type: string
+                  since:
+                    description: Since is when the operator started applying To.
+                    format: date-time
+                    type: string
+                  state:
+                    enum:
+                    - Pending
+                    - Applying
+                    - RollingBack
+                    - Ready
+                    - RolledBack
+                    - Failed
+                    type: string
+                  to:
+                    description: |-
+                      To is the updater image the release names, pinned by digest. Written by
+                      the updater.
+                    maxLength: 512
+                    type: string
+                required:
+                - to
+                type: object
             type: object
         required:
         - spec
