@@ -365,7 +365,7 @@ func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, 
 		case phase == framev1beta1.UpdatePhaseRolledBack && c.State != "Pending":
 			c.State = "RolledBack"
 		case phase == framev1beta1.UpdatePhaseFailed && c.State == "Applying":
-			c.State = "Failed"
+			c.State = PhaseFailed // same word, a component state
 		}
 	}
 	return r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
