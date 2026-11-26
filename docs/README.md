@@ -9,7 +9,7 @@ Engineering documentation for the Hearthrack operator and control plane. For the
 | [getting-started.md](getting-started.md) | Prerequisites, local dev loop, first deploy — start here |
 | [architecture.md](architecture.md) | Three layers (control plane, operator, IaC) and how they fit together |
 | [api.md](api.md) | CRD API, TypeScript SDK (`FrameClient`), authentication |
-| [crd-reference.md](crd-reference.md) | All 19 CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
+| [crd-reference.md](crd-reference.md) | All 21 CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
 | [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm, [provisioning a machine with Ubuntu](deployment.md#provisioning-a-machine-with-ubuntu) |
 | [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |

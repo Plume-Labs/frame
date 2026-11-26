@@ -3,7 +3,7 @@
 You need big hardware to run big workloads with unified approach like mainframe do, but you don't have the money for a real mainframe ?
 
 Hearthrack turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
-19 CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — all at `v1beta1`, with a deprecated `v1alpha1` still served on the six oldest — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
+21 CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — all at `v1beta1`, with a deprecated `v1alpha1` still served on the six oldest — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
 
 > **Hearthrack was called Frame until 2026-11.** The API group (`frame.plume-labs.io`), the `Frame*` kinds, namespaces and Helm chart name keep the old name on purpose, so existing installs keep working. See [naming.md](docs/naming.md) for what stays and why.
 
@@ -57,7 +57,7 @@ The console needs the API proxy *and* `authd` reachable (two terminals plus the 
 | [Getting Started](docs/getting-started.md) | Prerequisites, local dev, first deploy |
 | [Architecture](docs/architecture.md) | Three layers, data flows, topology constraints |
 | [API & SDK](docs/api.md) | `FrameClient` SDK, auth, raw K8s API, RBAC |
-| [CRD Reference](docs/crd-reference.md) | All 19 CRDs across two API groups — fields, controllers, webhooks |
+| [CRD Reference](docs/crd-reference.md) | All 21 CRDs across two API groups — fields, controllers, webhooks |
 | [Runbook](docs/runbook.md) | Health checks, failover, certificates, backup/restore, node tuning |
 | [Development](docs/development.md) | Build, test, lint — Go operator and React UI |
 | [Deployment](docs/deployment.md) | Image build, kustomize overlays, cert-manager |
