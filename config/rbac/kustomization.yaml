@@ -89,4 +89,12 @@ resources:
 - framecephaction_admin_role.yaml
 - framecephaction_editor_role.yaml
 - framecephaction_viewer_role.yaml
+# FrameUpdate: admin and viewer tiers only (an update restarts the platform).
+# FrameRelease: viewer tier only, written by the updater alone.
+- frameupdate_admin_role.yaml
+- frameupdate_editor_role.yaml
+- frameupdate_viewer_role.yaml
+- framerelease_admin_role.yaml
+- framerelease_editor_role.yaml
+- framerelease_viewer_role.yaml
 

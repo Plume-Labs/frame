@@ -1,0 +1,40 @@
+# This role deliberately carries no rbac.frame.plume-labs.io/tier label.
+#
+# A FrameUpdate moves Hearthrack itself to another version or back, which restarts the control plane and the console. Creating one is therefore admin only, like a FrameCephAction: labelling this file would let frame-editor aggregate its create verb, a one-request promotion from "can edit workloads" to "can restart the whole platform".
+#
+# Same shape as framecephaction_editor_role.yaml and framediskclaim_editor_role.yaml.
+
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants edit access to FrameUpdate resources including creation, modification and
+# deletion, without administrative capabilities like bulk deletion.
+#
+# Bind it deliberately if you want it, to a group, never to a user.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: frameupdate-editor-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameupdates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameupdates/status
+  verbs:
+  - get

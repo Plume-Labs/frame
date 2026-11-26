@@ -1,6 +1,6 @@
 # CRD Reference
 
-19 CRDs across two API groups: 17 in `frame.plume-labs.io` and
+21 CRDs across two API groups: 17 in `frame.plume-labs.io` and
 `FrameService` plus `InferenceModel` in `services.plume-labs.io` — a separate
 group so the service catalog can move without blocking the `frame.plume-labs.io`
 freeze (see [roadmap.md](roadmap.md)). Generated CRDs live in

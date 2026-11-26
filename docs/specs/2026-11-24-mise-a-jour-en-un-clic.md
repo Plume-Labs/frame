@@ -53,8 +53,8 @@ Pourquoi pas Argo/Flux comme moteur : il faudrait l'installer, l'exposer et lui 
 
 ### 3.3 L'API et la console
 
-- **`FrameUpdate`** (CRD, cluster, v1beta1) : `spec.targetVersion`, `spec.force` (bool), `spec.rollback` (bool). `status` : phase, étape en cours, composants faits/restants, version précédente, horodatages, raison d'échec. **C'est la seule surface** : la console ne touche ni Deployment ni image.
-- **Droits.** Création de `FrameUpdate` réservée au rôle **admin** (webhook de validation + RBAC) avec **ré-authentification par passkey** (authd, comme pour les gestes irréversibles du remplacement d'OSD). Journalisée dans Tasks avec la personne.
+- **`FrameUpdate`** (CRD, v1beta1, dans `frame-system`) : `spec.targetVersion`, `spec.force` (bool), `spec.rollback` (bool). `status` : phase, étape en cours, composants faits/restants, version précédente, horodatages, raison d'échec. **C'est la seule surface** : la console ne touche ni Deployment ni image.
+- **Droits.** Création de `FrameUpdate` réservée au rôle **admin** (règles CEL dans le CRD, pas de webhook, + RBAC : rôles admin et viewer seulement) avec **ré-authentification par passkey** (authd, comme pour les gestes irréversibles du remplacement d'OSD). Journalisée dans Tasks avec la personne.
 - **Console.** Le bouton remplace la carte « Préparer » qui devient « mode expert » (utile aux sites GitOps). Réutilise `disturbances()` : s'il y a des jobs, une installation ou un remplacement d'OSD en cours, le bouton est désactivé, avec **Forcer** après saisie de la version à confirmer. Affiche notes, version, avancement par composant, historique (5 dernières), bouton retour arrière.
 
 ### 3.4 Déroulé d'une mise à jour

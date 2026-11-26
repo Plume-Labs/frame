@@ -36,9 +36,11 @@ spec:
       - framemachines.frame.plume-labs.io
       - framenodes.frame.plume-labs.io
       - frameosdreplacements.frame.plume-labs.io
+      - framereleases.frame.plume-labs.io
       - frameresourcequotas.frame.plume-labs.io
       - framestorages.frame.plume-labs.io
       - frametasks.frame.plume-labs.io
+      - frameupdates.frame.plume-labs.io
       - frameusers.frame.plume-labs.io
       - networkhealthpolicies.frame.plume-labs.io
       - nodetunings.frame.plume-labs.io

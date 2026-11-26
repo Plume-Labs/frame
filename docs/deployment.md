@@ -112,7 +112,7 @@ refuses unless `DEPLOY_DEFAULT=1` — for throwaway dev/e2e clusters only.
 Edit the overlay's `secret-access.yaml` for your cluster's namespaces (or
 copy the overlay).
 
-This applies the `frame-system` namespace, all 19 CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+This applies the `frame-system` namespace, all 21 CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
 It does **not** install the node-tuning agent — that is a DaemonSet with node prerequisites, and it has its own step below.
 
