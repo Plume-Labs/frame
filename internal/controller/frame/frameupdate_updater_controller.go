@@ -94,37 +94,17 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if st == nil || updaterDecided(st.State) {
 		return ctrl.Result{}, nil
 	}
-	fail := func(msg string) (ctrl.Result, error) {
-		return ctrl.Result{}, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) {
-			s.State = framev1beta1.UpdaterFailed
-			s.Message = msg
-		})
-	}
-	if !updater.IsPinnedImage(st.To) {
-		return fail("the updater image is not pinned by digest: refused")
-	}
-	// Only the newest request that still has an updater to apply acts: an older
-	// one would put an obsolete image back.
-	newer, err := r.newerRequestPending(ctx, &upd)
-	if err != nil {
+	if msg, err := r.refusal(ctx, &upd); err != nil {
 		return ctrl.Result{}, err
-	}
-	if newer {
-		return fail("replaced by a newer update")
-	}
-	// What is asked must be what a verified release names: the updater's word is
-	// not enough to make the operator install an image.
-	if ok, err := r.namedByVerifiedRelease(ctx, &upd); err != nil {
-		return ctrl.Result{}, err
-	} else if !ok {
-		return fail("the updater image is not the one a verified release of " + upd.Spec.TargetVersion + " names: refused")
+	} else if msg != "" {
+		return ctrl.Result{}, r.fail(ctx, &upd, msg)
 	}
 
 	var dep appsv1.Deployment
 	key := types.NamespacedName{Namespace: r.Namespace, Name: updaterDeployment}
 	if err := r.Get(ctx, key, &dep); err != nil {
 		if apierrors.IsNotFound(err) {
-			return fail("this install has no " + updaterDeployment + " Deployment")
+			return ctrl.Result{}, r.fail(ctx, &upd, "this install has no "+updaterDeployment+" Deployment")
 		}
 		return ctrl.Result{}, err
 	}
@@ -135,7 +115,7 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 	if idx < 0 {
-		return fail("the " + updaterDeployment + " Deployment has no " + updaterContainer + " container")
+		return ctrl.Result{}, r.fail(ctx, &upd, "the "+updaterDeployment+" Deployment has no "+updaterContainer+" container")
 	}
 	current := dep.Spec.Template.Spec.Containers[idx].Image
 	now := metav1.NewTime(r.now())
@@ -162,45 +142,7 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return wait, r.setImage(ctx, &dep, idx, st.To)
 
 	case framev1beta1.UpdaterApplying:
-		switch current {
-		case st.From:
-			// Cut short between the journal and the image: apply it now, with a
-			// fresh deadline.
-			if err := r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) { s.Since = &now }); err != nil {
-				return ctrl.Result{}, err
-			}
-			return wait, r.setImage(ctx, &dep, idx, st.To)
-		case st.To:
-		default:
-			return fail("the " + updaterDeployment + " image was changed by someone else during the update: left as it is")
-		}
-		if healthy(&dep) {
-			if st.ReadySince == nil {
-				return wait, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = &now })
-			}
-			if r.now().Sub(st.ReadySince.Time) >= updaterStableFor {
-				return ctrl.Result{}, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) {
-					s.State = framev1beta1.UpdaterReady
-					s.Message = ""
-				})
-			}
-			return wait, nil
-		}
-		if st.ReadySince != nil {
-			// It was ready and no longer is: start counting again.
-			return wait, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = nil })
-		}
-		if st.Since == nil || r.now().Sub(st.Since.Time) > updaterReadyDeadline {
-			if st.From == "" {
-				return fail("the new updater did not become ready and the previous image is unknown: check the " +
-					updaterDeployment + " Deployment by hand")
-			}
-			return wait, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) {
-				s.State = framev1beta1.UpdaterRollingBack
-				s.Message = fmt.Sprintf("the new updater was not ready after %s", updaterReadyDeadline)
-			})
-		}
-		return wait, nil
+		return r.applying(ctx, &upd, &dep, idx)
 
 	case framev1beta1.UpdaterRollingBack:
 		if current != st.From {
@@ -214,6 +156,80 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 		})
 	}
 	return ctrl.Result{}, nil
+}
+
+// refusal says why this request must not be acted on, "" when it may.
+func (r *FrameUpdateUpdaterReconciler) refusal(ctx context.Context, upd *framev1beta1.FrameUpdate) (string, error) {
+	if !updater.IsPinnedImage(upd.Status.Updater.To) {
+		return "the updater image is not pinned by digest: refused", nil
+	}
+	// Only the newest request that still has an updater to apply acts: an older
+	// one would put an obsolete image back.
+	newer, err := r.newerRequestPending(ctx, upd)
+	if err != nil || newer {
+		return "replaced by a newer update", err
+	}
+	// What is asked must be what a verified release names: the updater's word is
+	// not enough to make the operator install an image.
+	ok, err := r.namedByVerifiedRelease(ctx, upd)
+	if err != nil || !ok {
+		return "the updater image is not the one a verified release of " + upd.Spec.TargetVersion + " names: refused", err
+	}
+	return "", nil
+}
+
+func (r *FrameUpdateUpdaterReconciler) fail(ctx context.Context, upd *framev1beta1.FrameUpdate, msg string) error {
+	return r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) {
+		s.State = framev1beta1.UpdaterFailed
+		s.Message = msg
+	})
+}
+
+// applying watches the new image until it is stable, or rolls it back.
+func (r *FrameUpdateUpdaterReconciler) applying(ctx context.Context, upd *framev1beta1.FrameUpdate, dep *appsv1.Deployment, idx int) (ctrl.Result, error) {
+	st := upd.Status.Updater
+	current := dep.Spec.Template.Spec.Containers[idx].Image
+	now := metav1.NewTime(r.now())
+	wait := ctrl.Result{RequeueAfter: updaterPoll}
+	switch current {
+	case st.From:
+		// Cut short between the journal and the image: apply it now, with a
+		// fresh deadline.
+		if err := r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) { s.Since = &now }); err != nil {
+			return ctrl.Result{}, err
+		}
+		return wait, r.setImage(ctx, dep, idx, st.To)
+	case st.To:
+	default:
+		return ctrl.Result{}, r.fail(ctx, upd, "the "+updaterDeployment+" image was changed by someone else during the update: left as it is")
+	}
+	if healthy(dep) {
+		if st.ReadySince == nil {
+			return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = &now })
+		}
+		if r.now().Sub(st.ReadySince.Time) >= updaterStableFor {
+			return ctrl.Result{}, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) {
+				s.State = framev1beta1.UpdaterReady
+				s.Message = ""
+			})
+		}
+		return wait, nil
+	}
+	if st.ReadySince != nil {
+		// It was ready and no longer is: start counting again.
+		return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = nil })
+	}
+	if st.Since != nil && r.now().Sub(st.Since.Time) <= updaterReadyDeadline {
+		return wait, nil
+	}
+	if st.From == "" {
+		return ctrl.Result{}, r.fail(ctx, upd, "the new updater did not become ready and the previous image is unknown: check the "+
+			updaterDeployment+" Deployment by hand")
+	}
+	return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) {
+		s.State = framev1beta1.UpdaterRollingBack
+		s.Message = fmt.Sprintf("the new updater was not ready after %s", updaterReadyDeadline)
+	})
 }
 
 func updaterDecided(state string) bool {

@@ -235,8 +235,12 @@ func older(a, b *framev1beta1.FrameUpdate) bool {
 // updaterBusy: the operator is still replacing the updater for this request.
 func updaterBusy(u *framev1beta1.FrameUpdate) bool {
 	s := u.Status.Updater
-	return s != nil && !(s.State == framev1beta1.UpdaterReady || s.State == framev1beta1.UpdaterRolledBack ||
-		s.State == framev1beta1.UpdaterFailed)
+	switch {
+	case s == nil, s.State == framev1beta1.UpdaterReady, s.State == framev1beta1.UpdaterRolledBack,
+		s.State == framev1beta1.UpdaterFailed:
+		return false
+	}
+	return true
 }
 
 func isActive(p string) bool {
