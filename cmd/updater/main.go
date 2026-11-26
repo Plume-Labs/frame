@@ -27,12 +27,14 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -51,6 +53,10 @@ func init() {
 }
 
 func main() {
+	// A revert in progress is not cut short by a stop: each component may take
+	// up to its ready timeout. The pod's terminationGracePeriodSeconds must be
+	// at least this long.
+	shutdownGrace := 15 * time.Minute
 	var (
 		namespace   string
 		probeAddr   string
@@ -68,9 +74,13 @@ func main() {
 	log := ctrl.Log.WithName("updater")
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                  scheme,
-		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress:  probeAddr,
+		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
+		HealthProbeBindAddress: probeAddr,
+		// Only the updater's own namespace is watched: its RBAC for FrameUpdate is
+		// a Role there, and a request in another namespace is not its business.
+		Cache:                   cache.Options{DefaultNamespaces: map[string]cache.Config{namespace: {}}},
+		GracefulShutdownTimeout: &shutdownGrace,
 		LeaderElection:          leaderElect,
 		LeaderElectionID:        "frame-updater.plume-labs.io",
 		LeaderElectionNamespace: namespace,
