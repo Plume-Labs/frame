@@ -1,8 +1,18 @@
-# The updater's whole grant. Its write surface on workloads is the image of the
-# named containers (internal/updater.DefaultWorkloads): patch on exactly these
-# objects, never create, never delete, in the three namespaces they live in.
-# Anything that widens this list is a change to what an update can do and wants
-# a reviewer who reads internal/updater/kube.go next to it.
+# The updater's whole grant. The code only ever changes the image of the named
+# containers (internal/updater.DefaultWorkloads), and the RBAC below allows
+# `patch` on exactly those objects, never create, never delete, in the three
+# namespaces they live in.
+#
+# What RBAC does NOT do: it cannot limit a patch to one field. Whoever holds
+# this ServiceAccount's token can rewrite the whole spec of these objects, and
+# choosing the image of the operator or of the privileged node-tuning DaemonSet
+# is already running code with their rights. So the real bound on what an update
+# can install is the signature check on the release, not this file. A
+# ValidatingAdmissionPolicy freezing everything but containers[*].image, and
+# requiring a digest-pinned image, would narrow it
+# (docs/specs/2026-11-24-mise-a-jour-en-un-clic.md section 4.8).
+# Anything that widens this list wants a reviewer who reads
+# internal/updater/kube.go next to it.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
