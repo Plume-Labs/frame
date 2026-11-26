@@ -17,7 +17,7 @@ version="${1:?version}"; channel="${2:?channel}"; owner="${3:?owner}"
 [[ "$channel" == stable || "$channel" == beta ]] || { echo "bad channel: $channel" >&2; exit 2; }
 [[ "$owner" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "bad owner: $owner" >&2; exit 2; }
 
-images=(controller ui uiproxy authd agent provisiond)
+images=(controller ui uiproxy authd agent provisiond updater)
 json_images='{}'
 for name in "${images[@]}"; do
   var="DIGEST_${name^^}"

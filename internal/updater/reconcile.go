@@ -160,7 +160,31 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 		// restart resumes from it.
 		return 5 * time.Second, nil
 	}
+	if final.Phase == PhaseSucceeded {
+		if img := releases[plan.Target].Images[UpdaterComponent]; img != "" {
+			if err := r.requestUpdater(ctx, key, img); err != nil {
+				return 0, err
+			}
+		}
+	}
 	return 0, r.finish(ctx, &upd, mapPhase(final.Phase), final.Message)
+}
+
+// requestUpdater asks the operator to apply the updater image the release
+// names. The updater cannot do it itself: the process that drives the update
+// would be replaced in the middle of it.
+func (r *Reconciler) requestUpdater(ctx context.Context, key types.NamespacedName, image string) error {
+	ctx = context.WithoutCancel(ctx)
+	var cur framev1beta1.FrameUpdate
+	if err := r.Client.Get(ctx, key, &cur); err != nil {
+		return err
+	}
+	if cur.Status.Updater != nil && cur.Status.Updater.To == image {
+		return nil
+	}
+	base := cur.DeepCopy()
+	cur.Status.Updater = &framev1beta1.UpdaterStatus{To: image, State: framev1beta1.UpdaterPending}
+	return r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
 }
 
 func (r *Reconciler) now() time.Time {

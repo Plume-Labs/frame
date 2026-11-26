@@ -310,3 +310,36 @@ func (s *stopsOnSetImage) WaitReady(ctx context.Context, c string) error {
 	}
 	return s.WorkCluster.WaitReady(ctx, c)
 }
+
+const newUpdaterImage = "ghcr.io/plume-labs/hearthrack-updater@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+func TestReconcileAsksTheOperatorToApplyTheUpdaterImage(t *testing.T) {
+	withUpdater := func(r *framev1beta1.FrameRelease) { r.Spec.Images[UpdaterComponent] = newUpdaterImage }
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, withUpdater),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	st := f.status(t)
+	if st.Phase != framev1beta1.UpdatePhaseSucceeded {
+		t.Fatalf("status = %+v", st)
+	}
+	if st.Updater == nil || st.Updater.To != newUpdaterImage || st.Updater.State != framev1beta1.UpdaterPending {
+		t.Fatalf("updater request = %+v", st.Updater)
+	}
+	// The updater is asked for, never patched by the updater itself.
+	if got := f.uiImage(t); got != "ui@1.1.0,proxy@1.1.0" {
+		t.Fatalf("images = %s", got)
+	}
+}
+
+func TestReconcileAsksNothingWhenTheReleaseHasNoUpdaterImage(t *testing.T) {
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t); st.Updater != nil {
+		t.Fatalf("updater request = %+v", st.Updater)
+	}
+}

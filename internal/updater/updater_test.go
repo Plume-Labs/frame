@@ -74,6 +74,31 @@ func TestParseManifest(t *testing.T) {
 	}
 }
 
+func TestParseManifestAcceptsTheUpdaterImageButNeverPlansIt(t *testing.T) {
+	doc := strings.Replace(goodManifest(), `"images":{`, `"images":{"updater":"`+img("updater", d1)+`",`, 1)
+	m, err := ParseManifest([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Images[UpdaterComponent] == "" {
+		t.Fatal("the updater image was dropped")
+	}
+	// The updater is applied by the operator: it is not one of the components
+	// the updater patches, so a plan never holds a step for it.
+	for _, c := range Components {
+		if c == UpdaterComponent {
+			t.Fatal("the updater must not be an apply-order component")
+		}
+	}
+	in := fixture()
+	rel := in.Releases["1.2.0"]
+	rel.Images = map[string]string{"updater": img("updater", d2)}
+	in.Releases["1.2.0"] = rel
+	if p := BuildPlan(in); len(p.Steps) != 0 {
+		t.Fatalf("steps = %+v", p.Steps)
+	}
+}
+
 func TestParseManifestRefuses(t *testing.T) {
 	cases := map[string]string{
 		"tag instead of digest": strings.Replace(goodManifest(), "@"+d1, ":1.2.0", 1),

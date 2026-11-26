@@ -185,6 +185,7 @@ rules:
   - frameresourcequotas/status
   - framestorages/status
   - frametasks/status
+  - frameupdates/status
   - nodetunings/status
   - schedulingpolicies/status
   verbs:
@@ -195,6 +196,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framealertsubscriptions
+  - frameupdates
   - frameusers
   - networkhealthpolicies
   - storagehealthpolicies

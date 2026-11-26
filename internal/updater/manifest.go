@@ -31,6 +31,14 @@ import (
 // by the operator, never by itself (spec §4.1), so it is not in this list.
 var Components = []string{"controller", "provisiond", "authd", "uiproxy", "agent", "ui"}
 
+// UpdaterComponent is the updater's own image. A release names it, but the
+// updater never applies it: it asks the operator to (FrameUpdate.status.updater).
+const UpdaterComponent = "updater"
+
+// IsPinnedImage reports whether ref is an image reference pinned by a sha256
+// digest, the only kind an update may install.
+func IsPinnedImage(ref string) bool { return digestRef.MatchString(ref) }
+
 var digestRef = regexp.MustCompile(`^[a-z0-9][a-z0-9./_:-]*@sha256:[0-9a-f]{64}$`)
 
 // Manifest is release.json as hack/release-manifest.sh writes it.
@@ -67,7 +75,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	if strings.Contains(m.Version, "-") != (m.Channel == "beta") {
 		return Manifest{}, fmt.Errorf("manifest: version %s does not belong on channel %s", m.Version, m.Channel)
 	}
-	known := map[string]bool{}
+	known := map[string]bool{UpdaterComponent: true}
 	for _, c := range Components {
 		known[c] = true
 	}

@@ -604,6 +604,15 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodetuning")
 		os.Exit(1)
 	}
+	// The updater's own update: the updater asks, the operator applies it
+	// (spec section 4.1). The updater runs in frame-system, next to the operator.
+	if err := (&controller.FrameUpdateUpdaterReconciler{
+		Client:    mgr.GetClient(),
+		Namespace: "frame-system",
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "frameupdate-updater-self")
+		os.Exit(1)
+	}
 	if err := (&controller.FrameMachineReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
