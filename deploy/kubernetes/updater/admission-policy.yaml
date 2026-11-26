@@ -1,0 +1,137 @@
+# What frame-updater may change on the workloads it patches: the image of a
+# container, nothing else, and only to a digest.
+#
+# RBAC cannot say that (a `patch` is not bounded to a field, see rbac.yaml), so
+# this policy does. Without it, whoever holds the updater's token can rewrite the
+# whole spec of the operator or of the privileged node-tuning DaemonSet; with it,
+# the token can at most move a container to an image pinned by digest, and the
+# thing that decides which digest is the signature check on the release.
+#
+# It applies to the updater's identity only: every other user and controller
+# updates these objects as before. It does not narrow RBAC, it narrows what an
+# allowed patch may contain.
+#
+# What it compares: every field of a container and of a pod spec except the
+# image. The pod spec is read through dyn(), so a field that only newer
+# Kubernetes versions have is compared where it exists and is simply absent
+# where it does not (the policy then also compiles on a 1.30 API server).
+# test/updateradmission fails when a field exists in the vendored Kubernetes
+# types that this file does not mention, so a Kubernetes upgrade that adds one
+# is noticed rather than silently left open.
+#
+# What it does not do: restrict which registry or repository an image comes
+# from. A site that mirrors the release into a local registry needs to change
+# the prefix, and the digest is what binds the content.
+#
+# Needs Kubernetes 1.30+ (ValidatingAdmissionPolicy is GA). On an older API
+# server the two objects are refused by the apply, which is the safe failure.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: frame-updater-image-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [deployments, daemonsets]
+  matchConditions:
+    - name: is-the-updater
+      expression: "request.userInfo.username == 'system:serviceaccount:frame-system:frame-updater'"
+  variables:
+    - name: oldSpec
+      expression: "dyn(oldObject.spec.template.spec)"
+    - name: newSpec
+      expression: "dyn(object.spec.template.spec)"
+  validations:
+    - message: the updater may only change the image of a container
+      expression: >-
+        object.spec.selector == oldObject.spec.selector &&
+        dyn(object.spec).?replicas == dyn(oldObject.spec).?replicas &&
+        object.spec.template.?metadata == oldObject.spec.template.?metadata
+    - message: the updater may not add, remove or rename a container
+      expression: "variables.newSpec.containers.map(c, c.name) == variables.oldSpec.containers.map(c, c.name)"
+    - message: the updater may only change the image of a container, not anything else of the pod spec
+      expression: >-
+        variables.newSpec.?activeDeadlineSeconds == variables.oldSpec.?activeDeadlineSeconds &&
+        variables.newSpec.?affinity == variables.oldSpec.?affinity &&
+        variables.newSpec.?automountServiceAccountToken == variables.oldSpec.?automountServiceAccountToken &&
+        variables.newSpec.?dnsConfig == variables.oldSpec.?dnsConfig &&
+        variables.newSpec.?dnsPolicy == variables.oldSpec.?dnsPolicy &&
+        variables.newSpec.?enableServiceLinks == variables.oldSpec.?enableServiceLinks &&
+        variables.newSpec.?evictionResponders == variables.oldSpec.?evictionResponders &&
+        variables.newSpec.?ephemeralContainers == variables.oldSpec.?ephemeralContainers &&
+        variables.newSpec.?hostAliases == variables.oldSpec.?hostAliases &&
+        variables.newSpec.?hostIPC == variables.oldSpec.?hostIPC &&
+        variables.newSpec.?hostNetwork == variables.oldSpec.?hostNetwork &&
+        variables.newSpec.?hostPID == variables.oldSpec.?hostPID &&
+        variables.newSpec.?hostUsers == variables.oldSpec.?hostUsers &&
+        variables.newSpec.?hostname == variables.oldSpec.?hostname &&
+        variables.newSpec.?hostnameOverride == variables.oldSpec.?hostnameOverride &&
+        variables.newSpec.?imagePullSecrets == variables.oldSpec.?imagePullSecrets &&
+        variables.newSpec.?initContainers == variables.oldSpec.?initContainers &&
+        variables.newSpec.?nodeName == variables.oldSpec.?nodeName &&
+        variables.newSpec.?nodeSelector == variables.oldSpec.?nodeSelector &&
+        variables.newSpec.?os == variables.oldSpec.?os &&
+        variables.newSpec.?overhead == variables.oldSpec.?overhead &&
+        variables.newSpec.?preemptionPolicy == variables.oldSpec.?preemptionPolicy &&
+        variables.newSpec.?priority == variables.oldSpec.?priority &&
+        variables.newSpec.?priorityClassName == variables.oldSpec.?priorityClassName &&
+        variables.newSpec.?readinessGates == variables.oldSpec.?readinessGates &&
+        variables.newSpec.?resourceClaims == variables.oldSpec.?resourceClaims &&
+        variables.newSpec.?resources == variables.oldSpec.?resources &&
+        variables.newSpec.?restartPolicy == variables.oldSpec.?restartPolicy &&
+        variables.newSpec.?runtimeClassName == variables.oldSpec.?runtimeClassName &&
+        variables.newSpec.?schedulerName == variables.oldSpec.?schedulerName &&
+        variables.newSpec.?schedulingGroup == variables.oldSpec.?schedulingGroup &&
+        variables.newSpec.?schedulingGates == variables.oldSpec.?schedulingGates &&
+        variables.newSpec.?securityContext == variables.oldSpec.?securityContext &&
+        variables.newSpec.?serviceAccount == variables.oldSpec.?serviceAccount &&
+        variables.newSpec.?serviceAccountName == variables.oldSpec.?serviceAccountName &&
+        variables.newSpec.?setHostnameAsFQDN == variables.oldSpec.?setHostnameAsFQDN &&
+        variables.newSpec.?shareProcessNamespace == variables.oldSpec.?shareProcessNamespace &&
+        variables.newSpec.?subdomain == variables.oldSpec.?subdomain &&
+        variables.newSpec.?terminationGracePeriodSeconds == variables.oldSpec.?terminationGracePeriodSeconds &&
+        variables.newSpec.?tolerations == variables.oldSpec.?tolerations &&
+        variables.newSpec.?topologySpreadConstraints == variables.oldSpec.?topologySpreadConstraints &&
+        variables.newSpec.?volumes == variables.oldSpec.?volumes
+    - message: the updater may only change the image of a container, not anything else of it
+      expression: >-
+        variables.newSpec.containers.all(c, variables.oldSpec.containers.exists(o, o.name == c.name &&
+        o.?args == c.?args &&
+        o.?command == c.?command &&
+        o.?env == c.?env &&
+        o.?envFrom == c.?envFrom &&
+        o.?imagePullPolicy == c.?imagePullPolicy &&
+        o.?lifecycle == c.?lifecycle &&
+        o.?livenessProbe == c.?livenessProbe &&
+        o.?ports == c.?ports &&
+        o.?readinessProbe == c.?readinessProbe &&
+        o.?resizePolicy == c.?resizePolicy &&
+        o.?resources == c.?resources &&
+        o.?restartPolicy == c.?restartPolicy &&
+        o.?restartPolicyRules == c.?restartPolicyRules &&
+        o.?securityContext == c.?securityContext &&
+        o.?startupProbe == c.?startupProbe &&
+        o.?stdin == c.?stdin &&
+        o.?stdinOnce == c.?stdinOnce &&
+        o.?terminationMessagePath == c.?terminationMessagePath &&
+        o.?terminationMessagePolicy == c.?terminationMessagePolicy &&
+        o.?tty == c.?tty &&
+        o.?volumeDevices == c.?volumeDevices &&
+        o.?volumeMounts == c.?volumeMounts &&
+        o.?workingDir == c.?workingDir))
+    - message: an image the updater sets must be pinned by sha256 digest
+      expression: >-
+        variables.newSpec.containers.all(c, variables.oldSpec.containers.exists(o, o.name == c.name &&
+        (o.image == c.image || c.image.matches('^[^@[:space:]]+@sha256:[0-9a-f]{64}$'))))
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: frame-updater-image-only
+spec:
+  policyName: frame-updater-image-only
+  validationActions: [Deny]
