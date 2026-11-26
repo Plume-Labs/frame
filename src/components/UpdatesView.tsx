@@ -13,6 +13,7 @@ import {
   FRAME_SYSTEM_NAMESPACE,
   UPDATE_WATCH_PATHS,
   createFrameClient,
+  FrameAPIError,
   type ReleaseView,
   type RunningComponent,
   type UpdateRequestView,
@@ -46,6 +47,8 @@ interface UpdatesData {
   activity: ActivityCounts
   releases: ReleaseView[]
   requests: UpdateRequestView[]
+  /** Why the update CRs could not be read, other than "not installed". */
+  updateError: string
 }
 
 async function readApp(app: UpdateApp): Promise<AppReading> {
@@ -57,22 +60,32 @@ async function readApp(app: UpdateApp): Promise<AppReading> {
   }
 }
 
+/** An install that predates the update CRDs answers 404: no releases, no error. Anything else is shown. */
+async function readUpdateCRs(): Promise<{ releases: ReleaseView[]; requests: UpdateRequestView[]; error: string }> {
+  try {
+    const [releases, requests] = await Promise.all([frame.updates.releases(), frame.updates.requests()])
+    return { releases, requests, error: '' }
+  } catch (e) {
+    if (e instanceof FrameAPIError && e.statusCode === 404) return { releases: [], requests: [], error: '' }
+    return { releases: [], requests: [], error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 async function load(): Promise<UpdatesData> {
-  const [components, jobs, installs, replacements, apps, releases, requests] = await Promise.all([
+  const [components, jobs, installs, replacements, apps, cr] = await Promise.all([
     frame.updates.running(),
     frame.jobs.list(),
     frame.installs.list(),
     frame.osdReplacements.list(),
     Promise.all(config().updates.apps.map(readApp)),
-    // An install that predates the update CRDs answers 404: the card then explains it instead of blanking the screen.
-    frame.updates.releases().catch(() => [] as ReleaseView[]),
-    frame.updates.requests().catch(() => [] as UpdateRequestView[]),
+    readUpdateCRs(),
   ])
   return {
     components,
     apps,
-    releases,
-    requests,
+    releases: cr.releases,
+    requests: cr.requests,
+    updateError: cr.error,
     activity: {
       runningJobs: jobs.items.filter((j) => j.status === 'running').length,
       installsInProgress: installs.filter((i) => !installTerminal(i.phase)).length,
@@ -192,7 +205,14 @@ function Body({ data, onChanged }: { data: UpdatesData; onChanged: () => void })
           <ComponentsTable components={data.components} />
         </CardContent>
       </Card>
-      <OneClickUpdateCard releases={data.releases} requests={data.requests} reasons={reasons} onChanged={onChanged} />
+      <OneClickUpdateCard
+        releases={data.releases}
+        requests={data.requests}
+        reasons={reasons}
+        runningImages={data.components.map((c) => c.image)}
+        error={data.updateError}
+        onChanged={onChanged}
+      />
       <PrepareCard
         components={data.components}
         activity={data.activity}

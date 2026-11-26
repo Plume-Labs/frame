@@ -114,6 +114,8 @@ export const en = {
   'updates.oneclick.rollback': 'Roll back to {version}',
   'updates.oneclick.rollbackRequested': 'Rollback requested.',
   'updates.oneclick.inProgress': 'Updating to {version}',
+  'updates.oneclick.unreadable': 'Updates could not be read: {error}',
+  'updates.oneclick.blockedOsd': 'A disk replacement is in progress: updating is refused until it ends.',
   'updates.oneclick.history': 'Recent updates',
   'updates.components.title': 'Components',
   'updates.col.name': 'Component',

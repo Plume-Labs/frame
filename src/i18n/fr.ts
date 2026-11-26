@@ -111,6 +111,8 @@ export const fr: Record<MessageKey, string> = {
   'updates.oneclick.rollback': 'Revenir à {version}',
   'updates.oneclick.rollbackRequested': 'Retour arrière demandé.',
   'updates.oneclick.inProgress': 'Mise à jour vers {version}',
+  'updates.oneclick.unreadable': 'Impossible de lire les mises à jour : {error}',
+  'updates.oneclick.blockedOsd': 'Un remplacement de disque est en cours : la mise à jour est refusée tant qu\'il n\'est pas terminé.',
   'updates.oneclick.history': 'Dernières mises à jour',
   'updates.components.title': 'Composants',
   'updates.col.name': 'Composant',

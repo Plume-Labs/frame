@@ -1,6 +1,6 @@
 // Pure logic behind the Updates screen: what version is running and what an
 // update would disturb right now. No network, no DOM — vitest reaches this
-// file, not the .tsx screen. The screen is read-only on purpose: it answers
+// file, not the .tsx screen. The screen files update requests; the in-cluster updater decides: it answers
 // "can the cluster afford an update now", it does not perform one.
 
 import type { ReleaseView, RunningComponent, UpdateRequestView } from './frame-sdk'
@@ -169,15 +169,25 @@ export function activeRequest(requests: UpdateRequestView[]): UpdateRequestView 
 }
 
 /**
- * The version running now, as far as the cluster says: the release whose images
- * are exactly what the last successful request left in place. '' when no request
- * has succeeded yet (a fresh install the updater has not touched).
+ * The version running now. A successful request lists only the components whose
+ * image changed, so history alone is ambiguous when a later release reuses an
+ * image: the running images decide, and history only breaks a tie. '' when it
+ * cannot be told (a fresh install the updater has not touched).
  */
-export function currentVersion(requests: UpdateRequestView[], releases: ReleaseView[]): string {
+export function currentVersion(requests: UpdateRequestView[], releases: ReleaseView[], runningImages: string[] = []): string {
+  const running = new Set(runningImages)
+  const scored = releases
+    .map((rel) => ({ rel, n: Object.values(rel.images).filter((img) => running.has(img)).length }))
+    .filter((x) => x.n > 0)
+  const best = Math.max(0, ...scored.map((x) => x.n))
+  const top = scored.filter((x) => x.n === best).map((x) => x.rel)
+  if (top.length === 1) return top[0].version
   const last = requests.find((r) => r.phase === 'Succeeded')
   if (!last || last.components.length === 0) return ''
-  const hit = releases.find((rel) => last.components.every((c) => rel.images[c.name] === c.to))
-  return hit?.version ?? ''
+  const byHistory = (rel: ReleaseView) => last.components.every((c) => rel.images[c.name] === c.to)
+  const pool = top.length > 0 ? top : releases
+  const hits = pool.filter(byHistory)
+  return hits.length === 1 ? hits[0].version : ''
 }
 
 /**
@@ -202,8 +212,9 @@ export function availableRelease(releases: ReleaseView[], current: string, chann
  */
 export function rollbackTarget(requests: UpdateRequestView[], releases: ReleaseView[], current: string): string | null {
   if (current === '') return null
-  const last = requests.find((r) => r.phase === 'Succeeded' && !r.rollback)
-  if (!last || last.fromVersion === '') return null
+  const last = requests.find((r) => r.phase === 'Succeeded')
+  // After a rollback there is nothing further back to offer: the previous version is the one now running.
+  if (!last || last.rollback || last.fromVersion === '') return null
   const running = releases.find((r) => r.version === current)
   if (!running || running.rollbackSafeTo === '') return null
   return compareVersions(last.fromVersion, running.rollbackSafeTo) >= 0 ? last.fromVersion : null

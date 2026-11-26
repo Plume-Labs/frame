@@ -149,6 +149,15 @@ describe('currentVersion', () => {
     const r = req({ components: [{ name: 'ui', from: 'ui@1.0.0', to: 'ui@1.1.0', state: 'Ready' }] })
     expect(currentVersion([r], releases)).toBe('1.1.0')
   })
+  it('uses the running images when a later release reuses the same image', () => {
+    const rels = [rel('1.0.0', { images: { ui: 'ui@a', api: 'api@a' } }), rel('1.1.0', { images: { ui: 'ui@b', api: 'api@b' } }), rel('1.2.0', { images: { ui: 'ui@b', api: 'api@c' } })]
+    const r = req({ components: [{ name: 'ui', from: 'ui@a', to: 'ui@b', state: 'Ready' }] })
+    expect(currentVersion([r], rels, ['ui@b', 'api@b'])).toBe('1.1.0')
+  })
+  it('is empty rather than wrong when history cannot tell two releases apart', () => {
+    const rels = [rel('1.1.0', { images: { ui: 'ui@b' } }), rel('1.2.0', { images: { ui: 'ui@b' } })]
+    expect(currentVersion([req({ components: [{ name: 'ui', from: 'x', to: 'ui@b', state: 'Ready' }] })], rels)).toBe('')
+  })
   it('ignores a failed or rolled-back request, and is empty with no history', () => {
     const failed = req({ phase: 'RolledBack', components: [{ name: 'ui', from: 'ui@1.0.0', to: 'ui@1.1.0', state: 'RolledBack' }] })
     expect(currentVersion([failed], releases)).toBe('')
@@ -173,6 +182,9 @@ describe('rollbackTarget', () => {
   it('offers nothing when the running release does not offer a rollback, or the floor is higher', () => {
     expect(rollbackTarget([up], releases, '1.2.0')).toBeNull()
     expect(rollbackTarget([req({ fromVersion: '0.9.0' })], releases, '1.1.0')).toBeNull()
+  })
+  it('offers nothing right after a rollback', () => {
+    expect(rollbackTarget([req({ rollback: true, fromVersion: '1.1.0' }), up], releases, '1.0.0')).toBeNull()
   })
   it('offers nothing without a known version or a previous one', () => {
     expect(rollbackTarget([up], releases, '')).toBeNull()

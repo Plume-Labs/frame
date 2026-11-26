@@ -22,11 +22,15 @@ export function OneClickUpdateCard({
   releases,
   requests,
   reasons,
+  runningImages,
+  error,
   onChanged,
 }: {
   releases: ReleaseView[]
   requests: UpdateRequestView[]
   reasons: Disturbance[]
+  runningImages: string[]
+  error: string
   onChanged: () => void
 }) {
   const { t } = useI18n()
@@ -34,12 +38,14 @@ export function OneClickUpdateCard({
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const current = currentVersion(requests, releases)
+  const current = currentVersion(requests, releases, runningImages)
   const next = availableRelease(releases, current, channel)
   const active = activeRequest(requests)
   const back = rollbackTarget(requests, releases, current)
+  // A replacement of a disk in progress is a hard refusal the updater never lets force lift.
+  const blocked = reasons.some((r) => r.key === 'osdReplacementsActive')
   const needsForce = reasons.length > 0
-  const confirmed = !needsForce || (next !== null && typed.trim() === next.version)
+  const confirmed = !blocked && (!needsForce || (next !== null && typed.trim() === next.version))
 
   async function run(action: () => Promise<void>, ok: MessageKey) {
     setBusy(true)
@@ -73,7 +79,13 @@ export function OneClickUpdateCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
-        {releases.length === 0 && <p className="text-muted-foreground">{t('updates.oneclick.none')}</p>}
+        {error && (
+          <p role="alert" className="flex items-center gap-2 text-destructive">
+            <Warning />
+            {t('updates.oneclick.unreadable', { error })}
+          </p>
+        )}
+        {!error && releases.length === 0 && <p className="text-muted-foreground">{t('updates.oneclick.none')}</p>}
 
         {releases.length > 0 && (
           <p className="flex items-center gap-2">
@@ -90,7 +102,8 @@ export function OneClickUpdateCard({
 
         {next && !active && (
           <div className="space-y-2">
-            {needsForce && (
+            {blocked && <p className="text-destructive">{t('updates.oneclick.blockedOsd')}</p>}
+            {needsForce && !blocked && (
               <div className="space-y-2">
                 <p className="flex items-center gap-2 text-warning">
                   <Warning />
@@ -101,7 +114,11 @@ export function OneClickUpdateCard({
                     <li key={r.key}>{t(`updates.reason.${r.key}` as MessageKey, { count: r.count })}</li>
                   ))}
                 </ul>
+                <label className="block text-muted-foreground" htmlFor="oneclick-confirm">
+                  {t('updates.oneclick.typeVersion', { version: next.version })}
+                </label>
                 <input
+                  id="oneclick-confirm"
                   className="h-9 rounded-md border border-border bg-background px-3 font-mono text-sm"
                   value={typed}
                   onChange={(e) => setTyped(e.target.value)}
@@ -128,7 +145,7 @@ export function OneClickUpdateCard({
             variant="outline"
             size="sm"
             className="font-mono gap-1.5"
-            disabled={busy}
+            disabled={busy || reasons.length > 0}
             onClick={() => run(() => frame.updates.requestRollback(), 'updates.oneclick.rollbackRequested')}
           >
             <ArrowUUpLeft />
