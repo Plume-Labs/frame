@@ -17,6 +17,7 @@ limitations under the License.
 package releasesync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,13 +66,19 @@ func (f *fakeRegistry) Fetch(_ context.Context, v string) ([]byte, string, error
 type fakeVerifier struct {
 	badManifest map[string]bool
 	badImage    map[string]bool
-	calls       int
+	// signed, when set, is the content each signed artifact digest really
+	// carries; the verifier refuses bytes that differ from it.
+	signed map[string][]byte
+	calls  int
 }
 
-func (f *fakeVerifier) VerifyManifest(_ context.Context, v, _ string) error {
+func (f *fakeVerifier) VerifyManifest(_ context.Context, v, digest string, manifest []byte) error {
 	f.calls++
 	if f.badManifest[v] {
 		return errors.New("no valid signature")
+	}
+	if f.signed != nil && !bytes.Equal(f.signed[digest], manifest) {
+		return errors.New("the bytes are not the content of the signed artifact")
 	}
 	return nil
 }
@@ -217,5 +224,79 @@ func TestObjectNameIsAValidDNSLabel(t *testing.T) {
 		if got := ObjectName(v); got != want {
 			t.Errorf("%s: %s", v, got)
 		}
+	}
+}
+
+func TestSyncRefusesBytesThatAreNotTheSignedContent(t *testing.T) {
+	reg := oneRelease("1.1.0")
+	// The digest is that of a genuinely signed artifact, the bytes are another
+	// release's images under this version.
+	ver := &fakeVerifier{signed: map[string][]byte{digest("1"): manifest("1.1.0", digest("a"))}}
+	reg.bodies["1.1.0"] = manifest("1.1.0", digest("c"))
+	s, c := setup(t, reg, ver, 0, published.Add(time.Hour))
+	res, _ := s.Sync(context.Background())
+	var l framev1beta1.FrameReleaseList
+	_ = c.List(context.Background(), &l)
+	if len(res.Rejected) != 1 || len(l.Items) != 0 {
+		t.Fatalf("%+v, recorded %d", res, len(l.Items))
+	}
+}
+
+func TestSyncDoesNotLetAnAntedatedManifestSkipTheMaturation(t *testing.T) {
+	reg := oneRelease("1.1.0")
+	reg.bodies["1.1.0"] = manifest("1.1.0", digest("a")) // published 6 days before "now" below
+	now := published.Add(6 * 24 * time.Hour)
+	s, c := setup(t, reg, &fakeVerifier{}, 48*time.Hour, now)
+	res, _ := s.Sync(context.Background())
+	if len(res.Waiting) != 1 || get(t, c, "1.1.0").Status.Verified {
+		t.Fatalf("an old date skipped the window: %+v", res)
+	}
+	s.Now = func() time.Time { return now.Add(49 * time.Hour) }
+	if res, _ = s.Sync(context.Background()); len(res.Verified) != 1 {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestSyncRefusesADateTooFarInTheFuture(t *testing.T) {
+	s, _ := setup(t, oneRelease("1.1.0"), &fakeVerifier{}, 0, published.Add(-30*24*time.Hour))
+	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestSyncDoesNotAdoptAnObjectItDidNotCreate(t *testing.T) {
+	s, c := setup(t, oneRelease("1.1.0"), &fakeVerifier{}, 0, published.Add(time.Hour))
+	pre := &framev1beta1.FrameRelease{}
+	pre.Namespace, pre.Name = ns, ObjectName("1.1.0")
+	pre.Spec.Version, pre.Spec.Channel, pre.Spec.Images = "1.1.0", "stable", map[string]string{"ui": "x@" + digest("a")}
+	if err := c.Create(context.Background(), pre); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 || get(t, c, "1.1.0").Status.Verified {
+		t.Fatalf("adopted a foreign object: %+v", res)
+	}
+}
+
+func TestSyncQuarantineSticksEvenIfTheRegistryGoesBack(t *testing.T) {
+	reg := oneRelease("1.1.0")
+	s, c := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
+	_, _ = s.Sync(context.Background())
+	good := reg.bodies["1.1.0"]
+	reg.bodies["1.1.0"] = manifest("1.1.0", digest("b"))
+	_, _ = s.Sync(context.Background())
+	reg.bodies["1.1.0"] = good // back to the original
+	_, _ = s.Sync(context.Background())
+	r := get(t, c, "1.1.0")
+	if r.Status.Verified || r.Annotations[QuarantineAnnotation] == "" {
+		t.Fatalf("a quarantined release came back by itself: %+v", r.Status)
+	}
+}
+
+func TestSyncRefusesAMalformedArtifactDigest(t *testing.T) {
+	reg := oneRelease("1.1.0")
+	reg.digests["1.1.0"] = "sha256:short"
+	s, _ := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
+	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 {
+		t.Fatalf("%+v", res)
 	}
 }

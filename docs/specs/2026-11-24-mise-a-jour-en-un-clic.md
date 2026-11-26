@@ -44,7 +44,7 @@ Il est **signé en cosign sans clé**, comme les images, avec l'identité éping
 
 Un petit binaire Go, `frame-updater`, dans `frame-system`, avec son propre compte de service. **Il remplace Argo pour le client**, il ne l'enveloppe pas :
 
-1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par l'updater) : toutes les 6 h, ou à la demande depuis la console.
+1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par un **synchroniseur de releases** distinct, avec son propre compte de service : lui seul écrit `status.verified` ; l'updater le lit sans jamais l'écrire) : toutes les 6 h, ou à la demande depuis la console.
 2. **Vérifie** la signature du manifeste puis celle de chaque image (bibliothèque `sigstore-go`, racine de confiance embarquée : pas d'appel réseau obligatoire en air-gap).
 3. À la demande d'un administrateur (`FrameUpdate`, §3.3) : contrôles préalables, application, surveillance, retour arrière automatique en cas d'échec.
 4. N'applique **que** : changement des digests d'images des charges **nommées** de Hearthrack, et mise à jour des CRD. **Jamais de prune**, jamais de suppression, jamais d'objet hors de sa liste blanche. C'est la leçon d'Argo avec élagage (sync sélective, App Diff à la main le 24/11).

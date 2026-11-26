@@ -61,8 +61,11 @@ type Registry interface {
 // Verifier checks signatures against the pinned identity. The real one uses
 // cosign; tests use a fake. Both must fail closed: any doubt is an error.
 type Verifier interface {
-	// VerifyManifest checks the signature of the release artifact at digest.
-	VerifyManifest(ctx context.Context, version, digest string) error
+	// VerifyManifest checks the signature of the release artifact at digest AND
+	// that manifest (the bytes the syncer is about to trust) is exactly the
+	// content that signed artifact carries: a signature on an artifact says
+	// nothing about bytes that merely arrived next to its digest.
+	VerifyManifest(ctx context.Context, version, digest string, manifest []byte) error
 	// VerifyImage checks the signature of one image reference (pinned by digest).
 	VerifyImage(ctx context.Context, ref string) error
 }
@@ -96,6 +99,19 @@ type Result struct {
 	Rejected map[string]string
 }
 
+var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// Labels and annotations the syncer owns.
+const (
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "frame-release-sync"
+	// QuarantineAnnotation, once set on a release, stops the syncer from ever
+	// verifying it again. Only a person removes it.
+	QuarantineAnnotation = "frame.plume-labs.io/quarantined"
+	// maxFuturePublication bounds how far ahead a signed publishedAt may lie.
+	maxFuturePublication = 24 * time.Hour
+)
+
 var nonName = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // ObjectName is the FrameRelease name for a version.
@@ -113,6 +129,9 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 	}
 	sort.Strings(versions)
 	for _, v := range versions {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		if _, err := updater.ParseVersion(v); err != nil {
 			res.Rejected[v] = "not a version: " + err.Error()
 			continue
@@ -135,9 +154,19 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 	if exists && cur.Spec.Version != version {
 		return fmt.Errorf("object %s already holds version %s", key.Name, cur.Spec.Version)
 	}
+	if exists && cur.Labels[managedByLabel] != managedByValue {
+		return fmt.Errorf("object %s was not created by the release syncer: refusing to adopt it", key.Name)
+	}
+	if exists && cur.Annotations[QuarantineAnnotation] != "" {
+		return fmt.Errorf("release %s is quarantined (%s): remove the annotation after looking at it", version, cur.Annotations[QuarantineAnnotation])
+	}
+
 	raw, digest, err := s.Registry.Fetch(ctx, version)
 	if err != nil {
 		return fmt.Errorf("fetching: %w", err)
+	}
+	if !digestPattern.MatchString(digest) {
+		return fmt.Errorf("the registry gave %q as the artifact digest", digest)
 	}
 	m, err := updater.ParseManifest(raw)
 	if err != nil {
@@ -151,13 +180,16 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 		// rather than guess one.
 		return errors.New("the manifest has no valid publishedAt")
 	}
+	if publishedAt(m).After(s.now().Add(maxFuturePublication)) {
+		return errors.New("the manifest is dated too far in the future")
+	}
 	want := specFrom(m)
 
 	if exists {
 		// A recorded release never changes. Different content under the same
 		// version is the signal worth a person's attention, not something to
 		// follow silently.
-		if !reflect.DeepEqual(comparable(cur.Spec), comparable(want)) {
+		if !reflect.DeepEqual(comparable(cur.Spec), comparable(want)) || !samePublication(cur.Spec.PublishedAt, want.PublishedAt) {
 			return s.markUnverified(ctx, &cur, "the registry now serves different content for this version: not trusted")
 		}
 		if cur.Status.ManifestDigest != "" && cur.Status.ManifestDigest != digest {
@@ -170,7 +202,7 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 		}
 	}
 
-	if err := s.Verifier.VerifyManifest(ctx, version, digest); err != nil {
+	if err := s.Verifier.VerifyManifest(ctx, version, digest, raw); err != nil {
 		return fmt.Errorf("manifest signature: %w", err)
 	}
 	for _, name := range sortedKeys(m.Images) {
@@ -181,8 +213,12 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 
 	if !exists {
 		cur = framev1beta1.FrameRelease{
-			ObjectMeta: metav1.ObjectMeta{Namespace: s.Namespace, Name: key.Name},
-			Spec:       want,
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: s.Namespace, Name: key.Name,
+				Labels:            map[string]string{managedByLabel: managedByValue},
+				CreationTimestamp: metav1.NewTime(s.now()), // the API server sets its own; this is for a client that does not
+			},
+			Spec: want,
 		}
 		if err := s.Client.Create(ctx, &cur); err != nil {
 			return err
@@ -192,7 +228,15 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 
 	now := metav1.NewTime(s.now())
 	cur.Status.ManifestDigest = digest
-	matureAt := publishedAt(m).Add(s.Maturation)
+	// The window runs from the later of the signed date and the moment this
+	// cluster first saw the release. publishedAt is chosen by whoever signs, so
+	// on its own it would let a compromised build date its release a month ago
+	// and skip the very delay meant to catch that.
+	firstSeen := cur.CreationTimestamp.Time
+	if firstSeen.IsZero() {
+		firstSeen = s.now()
+	}
+	matureAt := later(publishedAt(m), firstSeen).Add(s.Maturation)
 	if s.now().Before(matureAt) {
 		cur.Status.Verified = false
 		cur.Status.Message = "signature verified; offered from " + matureAt.UTC().Format(time.RFC3339)
@@ -206,7 +250,17 @@ func (s *Syncer) one(ctx context.Context, version string, res *Result) error {
 	return s.Client.Status().Update(ctx, &cur)
 }
 
+// markUnverified takes a release back and quarantines it: the syncer will not
+// verify it again, even if the registry goes back to the original content,
+// until a person has looked and removed the annotation.
 func (s *Syncer) markUnverified(ctx context.Context, r *framev1beta1.FrameRelease, msg string) error {
+	if r.Annotations == nil {
+		r.Annotations = map[string]string{}
+	}
+	r.Annotations[QuarantineAnnotation] = msg
+	if err := s.Client.Update(ctx, r); err != nil {
+		return err
+	}
 	r.Status.Verified = false
 	r.Status.VerifiedAt = nil
 	r.Status.Message = msg
@@ -214,6 +268,20 @@ func (s *Syncer) markUnverified(ctx context.Context, r *framev1beta1.FrameReleas
 		return err
 	}
 	return errors.New(msg)
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func samePublication(a, b *metav1.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Time.UTC().Truncate(time.Second).Equal(b.Time.UTC().Truncate(time.Second))
 }
 
 // specFrom copies a parsed manifest into the FrameRelease spec. Notes and

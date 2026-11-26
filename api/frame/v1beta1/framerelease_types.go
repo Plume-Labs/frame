@@ -20,8 +20,9 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // FrameRelease is one published Hearthrack release as the in-cluster updater
 // read it from the release channel (docs/specs/2026-11-24-mise-a-jour-en-un-clic.md,
-// §3.1–3.2). It is a read-only mirror: only the updater writes it, and only
-// after it verified the signature of the manifest. The console lists these to
+// §3.1–3.2). It is a read-only mirror: only the release syncer writes it (never the
+// updater that reads it), and only after it verified the signature of the
+// manifest and of every image. The console lists these to
 // show "version X available"; nothing here is a request to change anything.
 //
 // Every image is pinned by digest. A tag can be moved after the fact, a digest
@@ -74,7 +75,7 @@ type FrameReleaseSpec struct {
 	PublishedAt *metav1.Time `json:"publishedAt,omitempty"`
 }
 
-// FrameReleaseStatus records what the updater verified.
+// FrameReleaseStatus records what the release syncer verified.
 type FrameReleaseStatus struct {
 	// ManifestDigest is the sha256 digest of the signed manifest artifact.
 	// +optional
