@@ -265,8 +265,7 @@ func (w *world) image(deployment string) string {
 
 func TestUpdateThenRollbackLeavesTheUpdaterAlone(t *testing.T) {
 	w := newWorld(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	w.kubelet(ctx)
 
 	st := w.request("up", framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"})
@@ -294,8 +293,7 @@ func TestUpdateThenRollbackLeavesTheUpdaterAlone(t *testing.T) {
 
 func TestAnUpdaterThatNeverGetsReadyIsRolledBackAndTheUpdateStillEnds(t *testing.T) {
 	w := newWorld(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	w.kubelet(ctx)
 	w.breakDeployment("frame-updater")
 
@@ -317,8 +315,7 @@ func TestAnUpdaterThatNeverGetsReadyIsRolledBackAndTheUpdateStillEnds(t *testing
 
 func TestAnImageNoVerifiedReleaseNamesIsNeverInstalled(t *testing.T) {
 	w := newWorld(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	w.kubelet(ctx)
 
 	// Someone with the updater's token writes a request for an image of their own.
