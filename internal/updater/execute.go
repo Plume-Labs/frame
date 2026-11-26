@@ -85,8 +85,15 @@ func Execute(ctx context.Context, p Plan, c Cluster, j Journal, resume *State) S
 		st.Step = step.Component
 		if err := j.Record(ctx, st); err != nil {
 			// Without a journal a restart cannot resume: do not start a step
-			// nobody could account for.
-			st.Phase, st.Message = PhaseFailed, fmt.Sprintf("cannot record progress before %s: %v", step.Component, err)
+			// nobody could account for, and put back what was already done.
+			if ctx.Err() != nil {
+				return interrupted(st)
+			}
+			if len(st.Applied) > 0 && !p.Rollback {
+				return failStep(ctx, p, c, j, st, step, fmt.Errorf("cannot record progress: %w", err))
+			}
+			st.Phase, st.Step = PhaseFailed, ""
+			st.Message = fmt.Sprintf("cannot record progress before %s: %v", step.Component, err)
 			return st
 		}
 		err := c.SetImage(ctx, step.Component, step.To)
@@ -94,6 +101,9 @@ func Execute(ctx context.Context, p Plan, c Cluster, j Journal, resume *State) S
 			err = c.WaitReady(ctx, step.Component)
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return interrupted(st)
+			}
 			return failStep(ctx, p, c, j, st, step, err)
 		}
 		st.Applied = append(st.Applied, step.Component)
@@ -103,6 +113,16 @@ func Execute(ctx context.Context, p Plan, c Cluster, j Journal, resume *State) S
 
 	st.Phase, st.Step = PhaseSucceeded, ""
 	_ = j.Record(ctx, st)
+	return st
+}
+
+// interrupted is the outcome when the caller's context ended mid-plan (the
+// updater is being stopped): nothing is reverted, the journal still says
+// Applying, and the next run of the updater resumes from it. A shutdown must
+// not undo half an update only to start it again.
+func interrupted(st State) State {
+	st.Phase = PhaseApplying
+	st.Message = "interrupted: the update resumes when the updater is back"
 	return st
 }
 

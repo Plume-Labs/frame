@@ -128,6 +128,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 	}
 
 	plan := BuildPlan(in)
+	if plan.Refusal != nil && resuming {
+		// The update is half done: "Refused" would tell the console nothing was
+		// touched. Say what is true and leave the decision to a person.
+		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseFailed,
+			"the update was interrupted and cannot resume ("+plan.Refusal.Code+": "+plan.Refusal.Message+"): check each component's image and ready state by hand")
+	}
 	if plan.Refusal != nil {
 		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseRefused,
 			plan.Refusal.Code+": "+plan.Refusal.Message)
@@ -146,6 +152,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 
 	j := &statusJournal{r: r, key: key, plan: plan}
 	final := Execute(ctx, plan, r.Cluster, j, resume)
+	if final.Phase == PhaseApplying {
+		// Interrupted (the updater is stopping): leave the journal as it is, a
+		// restart resumes from it.
+		return 5 * time.Second, nil
+	}
 	return 0, r.finish(ctx, &upd, mapPhase(final.Phase), final.Message)
 }
 
@@ -189,10 +200,14 @@ func older(a, b *framev1beta1.FrameUpdate) bool {
 }
 
 func isActive(p string) bool {
-	return p == framev1beta1.UpdatePhaseVerifying || p == framev1beta1.UpdatePhaseApplying || p == framev1beta1.UpdatePhaseRollingBack
+	return p == framev1beta1.UpdatePhaseApplying || p == framev1beta1.UpdatePhaseRollingBack
 }
 
-func isWaiting(p string) bool { return p == "" || p == framev1beta1.UpdatePhasePending }
+// isWaiting: not started. Verifying is never written by this updater (the
+// signature is checked when a release is created), so it counts as not started.
+func isWaiting(p string) bool {
+	return p == "" || p == framev1beta1.UpdatePhasePending || p == framev1beta1.UpdatePhaseVerifying
+}
 
 func (r *Reconciler) releases(ctx context.Context) (map[string]Release, error) {
 	var l framev1beta1.FrameReleaseList
@@ -325,32 +340,43 @@ func componentStatuses(p Plan, applied []string, inStep string) []framev1beta1.U
 	return out
 }
 
-// finish writes the end of a request.
+// finish writes the end of a request. It runs even when the caller's context
+// has ended: an outcome that is known must not be lost.
 func (r *Reconciler) finish(ctx context.Context, upd *framev1beta1.FrameUpdate, phase, msg string) error {
-	key := client.ObjectKeyFromObject(upd)
+	ctx = context.WithoutCancel(ctx)
 	var cur framev1beta1.FrameUpdate
-	if err := r.Client.Get(ctx, key, &cur); err != nil {
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(upd), &cur); err != nil {
 		return err
 	}
+	base := cur.DeepCopy()
 	now := metav1.NewTime(r.now())
 	cur.Status.Phase = phase
 	cur.Status.Step = ""
 	cur.Status.Message = truncate(msg, 1024)
 	cur.Status.FinishedAt = &now
-	switch phase {
-	case framev1beta1.UpdatePhaseSucceeded:
-		setAll(cur.Status.Components, "Ready")
-	case framev1beta1.UpdatePhaseRolledBack:
-		setAll(cur.Status.Components, "RolledBack")
+	for i := range cur.Status.Components {
+		c := &cur.Status.Components[i]
+		switch {
+		case phase == framev1beta1.UpdatePhaseSucceeded:
+			c.State = "Ready"
+		case phase == framev1beta1.UpdatePhaseRolledBack && c.State != "Pending":
+			c.State = "RolledBack"
+		case phase == framev1beta1.UpdatePhaseFailed && c.State == "Applying":
+			c.State = "Failed"
+		}
 	}
-	return r.Client.Status().Update(ctx, &cur)
+	return r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
 }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // statusJournal writes the executor's progress on the FrameUpdate's status.
@@ -365,16 +391,27 @@ func (j *statusJournal) Record(ctx context.Context, s State) error {
 	if err := j.r.Client.Get(ctx, j.key, &cur); err != nil {
 		return err
 	}
+	// Only our own live update may be written: a read that is behind, or a
+	// request already decided, must not be dragged back to Applying.
+	switch cur.Status.Phase {
+	case framev1beta1.UpdatePhaseApplying, framev1beta1.UpdatePhaseRollingBack:
+	default:
+		return fmt.Errorf("the update is %q, not in progress: refusing to write progress", cur.Status.Phase)
+	}
+	base := cur.DeepCopy()
 	switch s.Phase {
 	case PhaseApplying:
 		cur.Status.Phase = framev1beta1.UpdatePhaseApplying
 	case PhaseRollingBack:
 		cur.Status.Phase = framev1beta1.UpdatePhaseRollingBack
 	}
-	if s.Step != "" {
-		cur.Status.Step = truncate("Applying "+s.Step, 200)
-	} else {
+	switch {
+	case s.Step == "":
 		cur.Status.Step = ""
+	case s.Phase == PhaseRollingBack:
+		cur.Status.Step = truncate("Reverting "+s.Step, 200)
+	default:
+		cur.Status.Step = truncate("Applying "+s.Step, 200)
 	}
 	if s.Phase == PhaseApplying || s.Phase == PhaseSucceeded {
 		cur.Status.Components = componentStatuses(j.plan, s.Applied, s.Step)
@@ -382,11 +419,7 @@ func (j *statusJournal) Record(ctx context.Context, s State) error {
 	if s.Message != "" {
 		cur.Status.Message = truncate(s.Message, 1024)
 	}
-	return j.r.Client.Status().Update(ctx, &cur)
-}
-
-func setAll(cs []framev1beta1.UpdateComponentStatus, state string) {
-	for i := range cs {
-		cs[i].State = state
-	}
+	// A merge patch, not an update: it carries no resourceVersion, so a cached
+	// read that is one write behind cannot turn into a conflict.
+	return j.r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
 }

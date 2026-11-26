@@ -229,3 +229,84 @@ func TestDetectCurrentDoesNotGuessBetweenEqualMatches(t *testing.T) {
 		t.Fatalf("got %q", v)
 	}
 }
+
+func TestReconcileResumesAnInterruptedUpdate(t *testing.T) {
+	// ui was done, uiproxy not: the journal says so and the cluster agrees.
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{
+			Phase: framev1beta1.UpdatePhaseApplying, FromVersion: "1.0.0",
+			Components: []framev1beta1.UpdateComponentStatus{
+				{Name: "uiproxy", From: "proxy@1.0.0", To: "proxy@1.1.0", State: "Applying"},
+				{Name: "ui", From: "ui@1.0.0", To: "ui@1.1.0", State: "Ready"},
+			},
+		}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseSucceeded {
+		t.Fatalf("status = %+v", st)
+	}
+	if got := f.uiImage(t); got != "ui@1.0.0,proxy@1.1.0" {
+		// ui was journalled Ready, so it is not touched again.
+		t.Fatalf("images = %s", got)
+	}
+}
+
+func TestReconcileDoesNotReportRefusedWhenAnInterruptedUpdateCannotResume(t *testing.T) {
+	// The target lost its verification during the restart.
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", false, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{
+			Phase: framev1beta1.UpdatePhaseApplying, FromVersion: "1.0.0",
+		}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	st := f.status(t, "u1")
+	if st.Phase != framev1beta1.UpdatePhaseFailed || !strings.Contains(st.Message, "by hand") {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestReconcileFailsHonestlyAfterAnInterruptedRevert(t *testing.T) {
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{Phase: framev1beta1.UpdatePhaseRollingBack}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseFailed {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestReconcileLeavesAnInterruptedRunForTheNextStart(t *testing.T) {
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	f.r.Cluster = &stopsOnSetImage{WorkCluster: f.r.Cluster, stop: cancel} // the updater is being stopped
+	if _, err := f.r.Reconcile(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t, "u1"); st.Phase != framev1beta1.UpdatePhaseApplying {
+		t.Fatalf("an interrupted update was decided: %+v", st)
+	}
+}
+
+// stopsOnSetImage cancels the context once the first image is patched, and
+// waits like the real cluster does: by looking at the context.
+type stopsOnSetImage struct {
+	WorkCluster
+	stop func()
+}
+
+func (s *stopsOnSetImage) SetImage(ctx context.Context, c, img string) error {
+	err := s.WorkCluster.SetImage(ctx, c, img)
+	s.stop()
+	return err
+}
+
+func (s *stopsOnSetImage) WaitReady(ctx context.Context, c string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.WorkCluster.WaitReady(ctx, c)
+}
