@@ -13,7 +13,7 @@
 
 ## 1. Build and push the images
 
-Six images, six Dockerfiles, six target pairs (`make docker-images` builds all six). **`make docker-build` builds
+Seven images, seven Dockerfiles, seven target pairs (`make docker-images` builds all seven). **`make docker-build` builds
 the controller, not the UI** — it uses `Dockerfile.controller`. The UI is the
 unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 
@@ -55,7 +55,7 @@ cosign verify "$IMAGE" \
   --certificate-identity-regexp '^https://github\.com/Plume-Labs/frame/\.github/workflows/build\.yml@refs/(heads/main|tags/v.+)$'
 ```
 
-The six images are `hearthrack-{controller,ui,authd,uiproxy,provisiond,agent}`,
+The seven images are `hearthrack-{controller,ui,authd,uiproxy,provisiond,agent,updater}`,
 and the former `frame-*` names carry the same signature. Verify the digest you
 actually deploy, not a tag: a tag can be moved after signing. The build also
 attaches an SBOM and SLSA provenance to each image as BuildKit attestations

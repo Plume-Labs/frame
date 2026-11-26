@@ -44,7 +44,7 @@ Il est **signé en cosign sans clé**, comme les images, avec l'identité éping
 
 Un petit binaire Go, `frame-updater`, dans `frame-system`, avec son propre compte de service. **Il remplace Argo pour le client**, il ne l'enveloppe pas :
 
-1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par l'updater) : toutes les 6 h, ou à la demande depuis la console.
+1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par un **synchroniseur de releases** distinct, avec son propre compte de service : lui seul écrit `status.verified` ; l'updater le lit sans jamais l'écrire) : toutes les 6 h, ou à la demande depuis la console.
 2. **Vérifie** la signature du manifeste puis celle de chaque image (bibliothèque `sigstore-go`, racine de confiance embarquée : pas d'appel réseau obligatoire en air-gap).
 3. À la demande d'un administrateur (`FrameUpdate`, §3.3) : contrôles préalables, application, surveillance, retour arrière automatique en cas d'échec.
 4. N'applique **que** : changement des digests d'images des charges **nommées** de Hearthrack, et mise à jour des CRD. **Jamais de prune**, jamais de suppression, jamais d'objet hors de sa liste blanche. C'est la leçon d'Argo avec élagage (sync sélective, App Diff à la main le 24/11).
@@ -89,7 +89,7 @@ Même moteur, plus tard : un manifeste de release par application (même format,
 | 4.5 | **Air-gap et registre local** : tags mouvants, registre sans signature. | Digests partout ; copie vérifiée avant écriture ; signatures conservées en référents OCI. |
 | 4.6 | **Cluster serré en CPU** : un déploiement roulant a besoin d'une place de surge (le cluster de Romuald est à ~15,3 / 16 de requests). | Contrôle de capacité à l'étape 1 ; stratégie `maxSurge: 0, maxUnavailable: 1` pour les charges à un réplica, avec coupure annoncée. |
 | 4.7 | **Chaîne d'approvisionnement** : canal compromis, version retirée. | Signature à identité épinglée, délai de maturation, liste de versions révoquées dans le manifeste du canal, pas de `force` sur la signature. |
-| 4.8 | **Droits trop larges** : l'updater écrit des CRD et des Deployments. | RBAC borné par `resourceNames` et espaces de noms ; pas de `cluster-admin` ; revue du chemin d'écriture dans l'audit. |
+| 4.8 | **Droits trop larges** : l'updater écrit des CRD et des Deployments. | RBAC borné par `resourceNames` et espaces de noms ; pas de `cluster-admin` ; revue du chemin d'écriture dans l'audit. **Limite connue (audit du 26/11)** : RBAC ne borne pas un `patch` à un champ ; qui détient le jeton peut réécrire toute la spec des Deployments nommés (dont l'opérateur et l'agent privilégié), donc le compte vaut en pratique cluster-admin. La vraie borne est la signature de la release. Parade à décider : une ValidatingAdmissionPolicy (CEL) limitée à ce compte, figeant `spec.template` sauf `containers[*].image`, et exigeant une image épinglée par digest. |
 | 4.9 | **Conflit avec Argo/Flux** : le selfHeal défait la mise à jour. | §3.6 : détection, mode proposition. |
 | 4.10 | Une mise à jour pendant un geste critique (Ceph, OSD). | `disturbances()`, plus blocage dur sur le remplacement d'OSD même avec `force`. |
 

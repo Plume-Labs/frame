@@ -25,6 +25,7 @@ l'installation kustomize (`deploy/kubernetes/...`, `config/...`) :
 | `frame-uiproxy:latest` | `Dockerfile.uiproxy` | `docker-build-uiproxy` / `docker-push-uiproxy` |
 | `cluster-control-auth:latest` (authd) | `Dockerfile.authd` | `docker-build-authd` / `docker-push-authd` |
 | `frame-agent:latest` (DaemonSet node-tuning) | `Dockerfile.agent` | `docker-build-agent` / `docker-push-agent` |
+| `frame-updater:latest` (one-click update) | `Dockerfile.updater` | `docker-build-updater` / `docker-push-updater` |
 
 Aucune n'est publiée. L'overlay `deploy/kubernetes/overlays/production`, que le
 job `Release` rend en `cluster-control-vX.Y.Z.yaml`, déclare `cluster-control`

@@ -1,0 +1,20 @@
+# frame-updater is deployed with its own kustomize target, like authd: it is
+# applied and rolled independently of the operator it updates, so an update
+# that goes wrong cannot take its own supervisor with it. It lives in
+# frame-system, next to the FrameUpdate and FrameRelease objects it reads.
+#
+# The image is a placeholder; set it before every apply:
+#   kustomize edit set image frame-updater=<registry>/<image>@sha256:<digest>
+# No registry or tag is committed here: they belong to the site that deploys.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No `namespace:` here on purpose: the Roles live in three namespaces and each
+# object says its own; a transformer would fold them all into one.
+
+resources:
+- rbac.yaml
+- deployment.yaml
+
+images:
+- name: frame-updater
