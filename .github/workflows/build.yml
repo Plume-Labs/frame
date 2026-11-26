@@ -272,10 +272,10 @@ jobs:
             cosign sign --yes "${repo}@${DIGEST}"
           done
 
-  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all six images ──────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all seven images ──────
   #
-  # Hearthrack builds six images, and the build job above pushes all six on main
-  # and on tags. Scanning covers the same six, because a CVE in the operator
+  # Hearthrack builds seven images, and the build job above pushes all seven on main
+  # and on tags. Scanning covers the same seven, because a CVE in the operator
   # is a CVE whether or not this workflow is what publishes it. The matrix names
   # each Dockerfile explicitly rather than deriving anything.
   #
@@ -289,9 +289,9 @@ jobs:
   # review) — added to `make docker-images`/`scan` but left out of this
   # matrix, the one that actually gates a release, and it is the one
   # non-distroless image in the fleet, running xorriso against input a
-  # BMC-adjacent network can influence. If a sixth Dockerfile appears, add it
+  # BMC-adjacent network can influence. If an eighth Dockerfile appears, add it
   # here; `make docker-images` and `make scan` are the local equivalents and
-  # they list all six.
+  # they list all seven.
   scan:
     name: Scan (${{ matrix.name }})
     runs-on: ubuntu-latest
