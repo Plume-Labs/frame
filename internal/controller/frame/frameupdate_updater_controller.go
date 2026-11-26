@@ -59,6 +59,30 @@ type FrameUpdateUpdaterReconciler struct {
 	// Namespace is where the updater runs; requests elsewhere are ignored.
 	Namespace string
 	Now       func() time.Time
+	// ReadyDeadline, StableFor and Poll default to the constants below; tests
+	// shorten them.
+	ReadyDeadline, StableFor, Poll time.Duration
+}
+
+func (r *FrameUpdateUpdaterReconciler) readyDeadline() time.Duration {
+	if r.ReadyDeadline > 0 {
+		return r.ReadyDeadline
+	}
+	return updaterReadyDeadline
+}
+
+func (r *FrameUpdateUpdaterReconciler) stableFor() time.Duration {
+	if r.StableFor > 0 {
+		return r.StableFor
+	}
+	return updaterStableFor
+}
+
+func (r *FrameUpdateUpdaterReconciler) poll() time.Duration {
+	if r.Poll > 0 {
+		return r.Poll
+	}
+	return updaterPoll
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameupdates,verbs=get;list;watch
@@ -119,7 +143,7 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 	current := dep.Spec.Template.Spec.Containers[idx].Image
 	now := metav1.NewTime(r.now())
-	wait := ctrl.Result{RequeueAfter: updaterPoll}
+	wait := ctrl.Result{RequeueAfter: r.poll()}
 
 	switch st.State {
 	case "", framev1beta1.UpdaterPending:
@@ -152,7 +176,7 @@ func (r *FrameUpdateUpdaterReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		return ctrl.Result{}, r.setUpdater(ctx, &upd, func(s *framev1beta1.UpdaterStatus) {
 			s.State = framev1beta1.UpdaterRolledBack
-			s.Message = fmt.Sprintf("the new updater was not ready after %s: the previous image is back", updaterReadyDeadline)
+			s.Message = fmt.Sprintf("the new updater was not ready after %s: the previous image is back", r.readyDeadline())
 		})
 	}
 	return ctrl.Result{}, nil
@@ -190,7 +214,7 @@ func (r *FrameUpdateUpdaterReconciler) applying(ctx context.Context, upd *framev
 	st := upd.Status.Updater
 	current := dep.Spec.Template.Spec.Containers[idx].Image
 	now := metav1.NewTime(r.now())
-	wait := ctrl.Result{RequeueAfter: updaterPoll}
+	wait := ctrl.Result{RequeueAfter: r.poll()}
 	switch current {
 	case st.From:
 		// Cut short between the journal and the image: apply it now, with a
@@ -207,7 +231,7 @@ func (r *FrameUpdateUpdaterReconciler) applying(ctx context.Context, upd *framev
 		if st.ReadySince == nil {
 			return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = &now })
 		}
-		if r.now().Sub(st.ReadySince.Time) >= updaterStableFor {
+		if r.now().Sub(st.ReadySince.Time) >= r.stableFor() {
 			return ctrl.Result{}, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) {
 				s.State = framev1beta1.UpdaterReady
 				s.Message = ""
@@ -219,7 +243,7 @@ func (r *FrameUpdateUpdaterReconciler) applying(ctx context.Context, upd *framev
 		// It was ready and no longer is: start counting again.
 		return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) { s.ReadySince = nil })
 	}
-	if st.Since != nil && r.now().Sub(st.Since.Time) <= updaterReadyDeadline {
+	if st.Since != nil && r.now().Sub(st.Since.Time) <= r.readyDeadline() {
 		return wait, nil
 	}
 	if st.From == "" {
@@ -228,7 +252,7 @@ func (r *FrameUpdateUpdaterReconciler) applying(ctx context.Context, upd *framev
 	}
 	return wait, r.setUpdater(ctx, upd, func(s *framev1beta1.UpdaterStatus) {
 		s.State = framev1beta1.UpdaterRollingBack
-		s.Message = fmt.Sprintf("the new updater was not ready after %s", updaterReadyDeadline)
+		s.Message = fmt.Sprintf("the new updater was not ready after %s", r.readyDeadline())
 	})
 }
 
