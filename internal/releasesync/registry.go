@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -95,41 +96,54 @@ func FetchManifest(_ context.Context, ref name.Reference, opts ...remote.Option)
 	if err != nil {
 		return nil, "", err
 	}
-	m, err := img.Manifest()
+	body, err := readSingleLayer(img, ManifestMediaType, false)
 	if err != nil {
 		return nil, "", err
 	}
+	return body, digest.String(), nil
+}
+
+// readSingleLayer returns the one layer of img whose media type is mediaType
+// (or starts with it, when prefix is set), bounded to maxManifestBytes. Two such
+// layers, none, or one too large is an error: what is read is what was named,
+// and never more than a few kilobytes are expected.
+func readSingleLayer(img v1.Image, mediaType string, prefix bool) ([]byte, error) {
+	m, err := img.Manifest()
+	if err != nil {
+		return nil, err
+	}
 	var layer *v1.Descriptor
 	for i := range m.Layers {
-		if string(m.Layers[i].MediaType) != ManifestMediaType {
+		mt := string(m.Layers[i].MediaType)
+		if mt != mediaType && !(prefix && strings.HasPrefix(mt, mediaType)) {
 			continue
 		}
 		if layer != nil {
-			return nil, "", errors.New("the release artifact carries more than one release manifest")
+			return nil, fmt.Errorf("the artifact carries more than one %s layer", mediaType)
 		}
 		layer = &m.Layers[i]
 	}
 	if layer == nil {
-		return nil, "", fmt.Errorf("the artifact has no %s layer", ManifestMediaType)
+		return nil, fmt.Errorf("the artifact has no %s layer", mediaType)
 	}
 	if layer.Size > maxManifestBytes {
-		return nil, "", fmt.Errorf("the release manifest is %d bytes, over the %d limit", layer.Size, maxManifestBytes)
+		return nil, fmt.Errorf("the %s layer is %d bytes, over the %d limit", mediaType, layer.Size, maxManifestBytes)
 	}
 	l, err := img.LayerByDigest(layer.Digest)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	rc, err := l.Compressed()
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
 	body, err := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if len(body) > maxManifestBytes {
-		return nil, "", errors.New("the release manifest is over the size limit")
+		return nil, errors.New("the layer is over the size limit")
 	}
-	return body, digest.String(), nil
+	return body, nil
 }

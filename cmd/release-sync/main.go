@@ -36,6 +36,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,6 +53,9 @@ import (
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	"github.com/Plume-Labs/frame/internal/releasesync"
 )
+
+// passTimeout bounds one pass over the registry.
+const passTimeout = 10 * time.Minute
 
 var scheme = runtime.NewScheme()
 
@@ -103,12 +108,23 @@ func main() {
 	defer stop()
 
 	ready := make(chan struct{})
+	// lastPass is when a pass last finished, failed or not: a pass that hangs
+	// (a registry or a TUF mirror that never answers) stops it moving, and the
+	// liveness probe then restarts the pod.
+	var lastPass atomic.Int64
+	lastPass.Store(time.Now().UnixNano())
 	if probeAddr != "" {
-		serveProbes(ctx, probeAddr, ready)
+		serveProbes(ctx, probeAddr, ready, func() bool {
+			return time.Since(time.Unix(0, lastPass.Load())) < 2*interval+passTimeout
+		})
 	}
 
+	var readyOnce sync.Once
 	registryOpts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain)}
 	pass := func() {
+		defer func() { lastPass.Store(time.Now().UnixNano()) }()
+		pctx, cancel := context.WithTimeout(ctx, passTimeout)
+		defer cancel()
 		// The trust root is read again every pass, so a rotation of the
 		// Sigstore keys is picked up without a restart.
 		material, err := releasesync.LoadTrustedRoot(trustedRoot)
@@ -128,11 +144,12 @@ func main() {
 			},
 			Maturation: maturation,
 		}
-		res, err := s.Sync(ctx)
+		res, err := s.Sync(pctx)
 		if err != nil {
 			log.Error(err, "Release sync pass failed")
 			return
 		}
+		readyOnce.Do(func() { close(ready) })
 		log.Info("Release sync pass done",
 			"created", res.Created, "verified", res.Verified, "waiting", res.Waiting, "rejected", len(res.Rejected))
 		for v, why := range res.Rejected {
@@ -141,7 +158,6 @@ func main() {
 	}
 
 	pass()
-	close(ready)
 	if once {
 		return
 	}
@@ -157,10 +173,17 @@ func main() {
 	}
 }
 
-// serveProbes answers /healthz at once and /readyz once the first pass is done.
-func serveProbes(ctx context.Context, addr string, ready <-chan struct{}) {
+// serveProbes answers /healthz while passes keep finishing and /readyz once one
+// has succeeded.
+func serveProbes(ctx context.Context, addr string, ready <-chan struct{}, alive func() bool) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if alive() {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		select {
 		case <-ready:
