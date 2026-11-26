@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,14 @@ func TestPolicy(t *testing.T) {
 		{"an init container image", `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","image":"` + newImg + `"}]}}}}`, false},
 		{"replicas", `{"spec":{"replicas":0}}`, false},
 		{"pod labels", `{"spec":{"template":{"metadata":{"labels":{"x":"y"}}}}}`, false},
+		{"an owner that does not exist", `{"metadata":{"ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"gone","uid":"00000000-0000-0000-0000-000000000001"}]}}`, false},
+		{"a finalizer", `{"metadata":{"finalizers":["example.com/x"]}}`, false},
+		{"a label on the workload", `{"metadata":{"labels":{"x":"y"}}}`, false},
+		{"an annotation on the workload", `{"metadata":{"annotations":{"x":"y"}}}`, false},
+		{"pausing the rollout", `{"spec":{"paused":true}}`, false},
+		{"a rollout strategy", `{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}`, false},
+		{"a progress deadline", `{"spec":{"progressDeadlineSeconds":3600}}`, false},
+		{"a revision history limit", `{"spec":{"revisionHistoryLimit":0}}`, false},
 		{"a node name", `{"spec":{"template":{"spec":{"nodeName":"n1"}}}}`, false},
 	}
 	for i, tc := range cases {
@@ -294,6 +303,21 @@ func TestPolicy(t *testing.T) {
 			t.Fatalf("refused: %v", err)
 		}
 	})
+	for name, body := range map[string]string{
+		"daemonset update strategy":   `{"spec":{"updateStrategy":{"type":"OnDelete"}}}`,
+		"daemonset min ready seconds": `{"spec":{"minReadySeconds":3600}}`,
+		"daemonset owner":             `{"metadata":{"ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"gone","uid":"00000000-0000-0000-0000-000000000001"}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := daemonSet("ds-" + strings.ReplaceAll(name, " ", "-"))
+			if err := admin.Create(ctx, ds); err != nil {
+				t.Fatal(err)
+			}
+			if err := patch(ctx, asUpd, ds, body); !deniedByPolicy(err) {
+				t.Fatalf("not refused by the policy: %v", err)
+			}
+		})
+	}
 	t.Run("daemonset without host PID cannot be given it", func(t *testing.T) {
 		ds := daemonSet("agent2")
 		ds.Spec.Template.Spec.HostPID = false
@@ -336,4 +360,27 @@ func TestPolicyNamesEveryField(t *testing.T) {
 	// policy lets through.
 	check(reflect.TypeOf(corev1.PodSpec{}), []string{"variables.newSpec.?"}, map[string]bool{"containers": true})
 	check(reflect.TypeOf(corev1.Container{}), []string{"o.?"}, map[string]bool{"name": true, "image": true})
+	// selector and template have their own rules.
+	check(reflect.TypeOf(appsv1.DeploymentSpec{}), []string{"variables.newWorkload.?"}, map[string]bool{"selector": true, "template": true})
+	check(reflect.TypeOf(appsv1.DaemonSetSpec{}), []string{"variables.newWorkload.?"}, map[string]bool{"selector": true, "template": true})
+	// What the API server owns, or cannot be changed by a patch, is not the
+	// policy's concern; the rest of the metadata is.
+	check(reflect.TypeOf(metav1.ObjectMeta{}), []string{"variables.newMeta.?"}, map[string]bool{
+		"name": true, "generateName": true, "namespace": true, "selfLink": true, "uid": true,
+		"resourceVersion": true, "generation": true, "creationTimestamp": true,
+		"deletionTimestamp": true, "deletionGracePeriodSeconds": true, "managedFields": true,
+		"annotations": true, // compared by its own rule, which lets the DaemonSet generation through
+	})
+	if !strings.Contains(text, "variables.newMeta.?annotations.orValue") {
+		t.Error("annotations are not compared by admission-policy.yaml")
+	}
+
+	// Every comparison names the same field on both sides: a typo on one side
+	// would compare "none" to "none" and always pass, and the checks above only
+	// read the first side.
+	for _, m := range regexp.MustCompile(`\.\?(\w+) == [\w.]+\.\?(\w+)`).FindAllStringSubmatch(text, -1) {
+		if m[1] != m[2] {
+			t.Errorf("a comparison reads %s on one side and %s on the other", m[1], m[2])
+		}
+	}
 }

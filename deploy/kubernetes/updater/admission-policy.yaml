@@ -11,8 +11,12 @@
 # updates these objects as before. It does not narrow RBAC, it narrows what an
 # allowed patch may contain.
 #
-# What it compares: every field of a container and of a pod spec except the
-# image. The pod spec is read through dyn(), so a field that only newer
+# What it compares: the object's labels, annotations, owners and finalizers
+# (the API server itself bumps the generation annotation of a DaemonSet when its
+# template changes, so that one annotation is let through; an owner that does not exist gets the object garbage-collected, which RBAC
+# says the updater never does), every field of the Deployment or DaemonSet spec
+# outside the pod template, and every field of a container and of a pod spec
+# except the image. The pod spec is read through dyn(), so a field that only newer
 # Kubernetes versions have is compared where it exists and is simply absent
 # where it does not (the policy then also compiles on a 1.30 API server).
 # test/updateradmission fails when a field exists in the vendored Kubernetes
@@ -21,7 +25,10 @@
 #
 # What it does not do: restrict which registry or repository an image comes
 # from. A site that mirrors the release into a local registry needs to change
-# the prefix, and the digest is what binds the content.
+# the prefix, and the digest is what binds the content. So a stolen updater
+# token still means "run any image, pinned by digest, as these workloads"; what
+# stops the updater's own code from doing that is the signature check, not this
+# file.
 #
 # Needs Kubernetes 1.30+ (ValidatingAdmissionPolicy is GA). On an older API
 # server the two objects are refused by the apply, which is the safe failure.
@@ -41,6 +48,18 @@ spec:
     - name: is-the-updater
       expression: "request.userInfo.username == 'system:serviceaccount:frame-system:frame-updater'"
   variables:
+    - name: oldWorkload
+      expression: "dyn(oldObject.spec)"
+    - name: newWorkload
+      expression: "dyn(object.spec)"
+    - name: oldMeta
+      expression: "dyn(oldObject.metadata)"
+    - name: newMeta
+      expression: "dyn(object.metadata)"
+    - name: oldAnnotations
+      expression: "variables.oldMeta.?annotations.orValue({})"
+    - name: newAnnotations
+      expression: "variables.newMeta.?annotations.orValue({})"
     - name: oldSpec
       expression: "dyn(oldObject.spec.template.spec)"
     - name: newSpec
@@ -49,8 +68,21 @@ spec:
     - message: the updater may only change the image of a container
       expression: >-
         object.spec.selector == oldObject.spec.selector &&
-        dyn(object.spec).?replicas == dyn(oldObject.spec).?replicas &&
-        object.spec.template.?metadata == oldObject.spec.template.?metadata
+        object.spec.template.?metadata == oldObject.spec.template.?metadata &&
+        variables.newWorkload.?minReadySeconds == variables.oldWorkload.?minReadySeconds &&
+        variables.newWorkload.?paused == variables.oldWorkload.?paused &&
+        variables.newWorkload.?progressDeadlineSeconds == variables.oldWorkload.?progressDeadlineSeconds &&
+        variables.newWorkload.?replicas == variables.oldWorkload.?replicas &&
+        variables.newWorkload.?revisionHistoryLimit == variables.oldWorkload.?revisionHistoryLimit &&
+        variables.newWorkload.?strategy == variables.oldWorkload.?strategy &&
+        variables.newWorkload.?updateStrategy == variables.oldWorkload.?updateStrategy
+    - message: the updater may not change the metadata of a workload (labels, annotations, owners, finalizers)
+      expression: >-
+        variables.newAnnotations.all(k, k == 'deprecated.daemonset.template.generation' || (k in variables.oldAnnotations && variables.oldAnnotations[k] == variables.newAnnotations[k])) &&
+        variables.oldAnnotations.all(k, k == 'deprecated.daemonset.template.generation' || k in variables.newAnnotations) &&
+        variables.newMeta.?finalizers == variables.oldMeta.?finalizers &&
+        variables.newMeta.?labels == variables.oldMeta.?labels &&
+        variables.newMeta.?ownerReferences == variables.oldMeta.?ownerReferences
     - message: the updater may not add, remove or rename a container
       expression: "variables.newSpec.containers.map(c, c.name) == variables.oldSpec.containers.map(c, c.name)"
     - message: the updater may only change the image of a container, not anything else of the pod spec
