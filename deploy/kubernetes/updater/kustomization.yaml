@@ -14,6 +14,7 @@ kind: Kustomization
 
 resources:
 - rbac.yaml
+- admission-policy.yaml
 - deployment.yaml
 
 images:

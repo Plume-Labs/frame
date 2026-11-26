@@ -7,9 +7,9 @@
 # this ServiceAccount's token can rewrite the whole spec of these objects, and
 # choosing the image of the operator or of the privileged node-tuning DaemonSet
 # is already running code with their rights. So the real bound on what an update
-# can install is the signature check on the release, not this file. A
-# ValidatingAdmissionPolicy freezing everything but containers[*].image, and
-# requiring a digest-pinned image, would narrow it
+# can install is the signature check on the release, not this file.
+# admission-policy.yaml narrows it: the updater's patches may change only
+# containers[*].image, and only to a digest
 # (docs/specs/2026-11-24-mise-a-jour-en-un-clic.md section 4.8).
 # Anything that widens this list wants a reviewer who reads
 # internal/updater/kube.go next to it.
