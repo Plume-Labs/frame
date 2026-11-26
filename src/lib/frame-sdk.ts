@@ -4427,14 +4427,168 @@ export function updateWatchPaths(namespace: string): string[] {
 
 export const UPDATE_WATCH_PATHS = [
   ...updateWatchPaths(FRAME_SYSTEM_NAMESPACE),
+  frameListPath('frameupdates', FRAME_SYSTEM_NAMESPACE),
+  frameListPath('framereleases', FRAME_SYSTEM_NAMESPACE),
 ] as const
+
+/** A FrameRelease CR: a signed release the in-cluster updater read from its channel. */
+export interface FrameReleaseCR {
+  metadata: { name: string }
+  spec?: {
+    version?: string
+    channel?: string
+    images?: Record<string, string>
+    minFrom?: string
+    rollbackSafeTo?: string
+    notes?: string
+    revoked?: boolean
+    publishedAt?: string
+  }
+  status?: { verified?: boolean; message?: string }
+}
+
+/** A release, projected for the screen. */
+export interface ReleaseView {
+  name: string
+  version: string
+  channel: string
+  images: Record<string, string>
+  minFrom: string
+  rollbackSafeTo: string
+  notes: string
+  revoked: boolean
+  verified: boolean
+  publishedAt: string
+}
+
+export function crToRelease(cr: FrameReleaseCR): ReleaseView {
+  return {
+    name: cr.metadata.name,
+    version: cr.spec?.version ?? '',
+    channel: cr.spec?.channel ?? '',
+    images: cr.spec?.images ?? {},
+    minFrom: cr.spec?.minFrom ?? '',
+    rollbackSafeTo: cr.spec?.rollbackSafeTo ?? '',
+    notes: cr.spec?.notes ?? '',
+    revoked: cr.spec?.revoked === true,
+    verified: cr.status?.verified === true,
+    publishedAt: cr.spec?.publishedAt ?? '',
+  }
+}
+
+/** A FrameUpdate CR: a request to update Hearthrack, or to go back. */
+export interface FrameUpdateCR {
+  metadata: { name: string; creationTimestamp?: string }
+  spec?: { targetVersion?: string; rollback?: boolean; force?: boolean }
+  status?: {
+    phase?: string
+    step?: string
+    fromVersion?: string
+    message?: string
+    requestedBy?: string
+    startedAt?: string
+    finishedAt?: string
+    components?: { name?: string; from?: string; to?: string; state?: string }[]
+  }
+}
+
+export interface UpdateComponentView {
+  name: string
+  from: string
+  to: string
+  state: string
+}
+
+/** An update request, projected for the screen. */
+export interface UpdateRequestView {
+  name: string
+  createdAt: string
+  targetVersion: string
+  rollback: boolean
+  force: boolean
+  /** '' until the updater has picked the request up. */
+  phase: string
+  step: string
+  message: string
+  fromVersion: string
+  requestedBy: string
+  startedAt: string
+  finishedAt: string
+  components: UpdateComponentView[]
+}
+
+export function crToUpdateRequest(cr: FrameUpdateCR): UpdateRequestView {
+  return {
+    name: cr.metadata.name,
+    createdAt: cr.metadata.creationTimestamp ?? '',
+    targetVersion: cr.spec?.targetVersion ?? '',
+    rollback: cr.spec?.rollback === true,
+    force: cr.spec?.force === true,
+    phase: cr.status?.phase ?? '',
+    step: cr.status?.step ?? '',
+    message: cr.status?.message ?? '',
+    fromVersion: cr.status?.fromVersion ?? '',
+    requestedBy: cr.status?.requestedBy ?? '',
+    startedAt: cr.status?.startedAt ?? '',
+    finishedAt: cr.status?.finishedAt ?? '',
+    components: (cr.status?.components ?? []).map((c) => ({
+      name: c.name ?? '',
+      from: c.from ?? '',
+      to: c.to ?? '',
+      state: c.state ?? '',
+    })),
+  }
+}
 
 interface DaemonSetCR extends WorkloadCR {
   status?: { readyReplicas?: number; replicas?: number; numberReady?: number; desiredNumberScheduled?: number }
 }
 
-/** Read-only: what version of Hearthrack is running. Nothing here writes to the cluster. */
+/**
+ * What version of Hearthrack is running, and (since the in-console update) the
+ * two ways to change it. The console never patches an image: it creates a
+ * FrameUpdate and the in-cluster updater does the rest, after checking the
+ * signature and what is in flight.
+ */
 class UpdateClient {
+  async releases(): Promise<ReleaseView[]> {
+    const res = await k8sFetch<ListResponse<FrameReleaseCR>>(frameListPath('framereleases', FRAME_SYSTEM_NAMESPACE))
+    return (res.items ?? []).map(crToRelease)
+  }
+
+  async requests(): Promise<UpdateRequestView[]> {
+    const res = await k8sFetch<ListResponse<FrameUpdateCR>>(frameListPath('frameupdates', FRAME_SYSTEM_NAMESPACE))
+    return (res.items ?? []).map(crToUpdateRequest).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  /** Ask the updater to move to `version`. `force` only lifts "work in flight". */
+  async requestUpdate(version: string, force: boolean): Promise<void> {
+    await k8sFetch<unknown>(frameListPath('frameupdates', FRAME_SYSTEM_NAMESPACE), {
+      action: boundedActionLabel(`update Hearthrack to ${version}`),
+      method: 'POST',
+      body: {
+        apiVersion: 'frame.plume-labs.io/v1beta1',
+        kind: 'FrameUpdate',
+        metadata: { generateName: 'update-', namespace: FRAME_SYSTEM_NAMESPACE },
+        spec: force ? { targetVersion: version, force: true } : { targetVersion: version },
+      },
+    })
+  }
+
+  /** Ask the updater to return to the version this install ran before its last update. */
+  async requestRollback(): Promise<void> {
+    await k8sFetch<unknown>(frameListPath('frameupdates', FRAME_SYSTEM_NAMESPACE), {
+      action: boundedActionLabel('roll Hearthrack back'),
+      method: 'POST',
+      body: {
+        apiVersion: 'frame.plume-labs.io/v1beta1',
+        kind: 'FrameUpdate',
+        metadata: { generateName: 'rollback-', namespace: FRAME_SYSTEM_NAMESPACE },
+        spec: { rollback: true },
+      },
+    })
+  }
+
   async running(namespace: string = FRAME_SYSTEM_NAMESPACE): Promise<RunningComponent[]> {
     const [deps, sts, dss] = await Promise.all(
       updateWatchPaths(namespace).map((path) => k8sFetch<ListResponse<DaemonSetCR>>(path)),

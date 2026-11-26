@@ -9,7 +9,15 @@ import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { useI18n } from '@/i18n/context'
 import type { MessageKey } from '@/i18n'
-import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, type RunningComponent } from '@/lib/frame-sdk'
+import {
+  FRAME_SYSTEM_NAMESPACE,
+  UPDATE_WATCH_PATHS,
+  createFrameClient,
+  type ReleaseView,
+  type RunningComponent,
+  type UpdateRequestView,
+} from '@/lib/frame-sdk'
+import { OneClickUpdateCard } from '@/components/OneClickUpdateCard'
 import { isTerminal as installTerminal } from '@/lib/installs'
 import { isTerminal as replacementTerminal } from '@/lib/osd-replacement'
 import {
@@ -36,6 +44,8 @@ interface UpdatesData {
   components: RunningComponent[]
   apps: AppReading[]
   activity: ActivityCounts
+  releases: ReleaseView[]
+  requests: UpdateRequestView[]
 }
 
 async function readApp(app: UpdateApp): Promise<AppReading> {
@@ -48,16 +58,21 @@ async function readApp(app: UpdateApp): Promise<AppReading> {
 }
 
 async function load(): Promise<UpdatesData> {
-  const [components, jobs, installs, replacements, apps] = await Promise.all([
+  const [components, jobs, installs, replacements, apps, releases, requests] = await Promise.all([
     frame.updates.running(),
     frame.jobs.list(),
     frame.installs.list(),
     frame.osdReplacements.list(),
     Promise.all(config().updates.apps.map(readApp)),
+    // An install that predates the update CRDs answers 404: the card then explains it instead of blanking the screen.
+    frame.updates.releases().catch(() => [] as ReleaseView[]),
+    frame.updates.requests().catch(() => [] as UpdateRequestView[]),
   ])
   return {
     components,
     apps,
+    releases,
+    requests,
     activity: {
       runningJobs: jobs.items.filter((j) => j.status === 'running').length,
       installsInProgress: installs.filter((i) => !installTerminal(i.phase)).length,
@@ -110,7 +125,7 @@ export function UpdatesView() {
         </Card>
       )}
 
-      {state.phase === 'ready' && state.data.components.length > 0 && <Body data={state.data} />}
+      {state.phase === 'ready' && state.data.components.length > 0 && <Body data={state.data} onChanged={() => reload()} />}
 
       {state.phase === 'ready' &&
         state.data.apps.map((r) => <AppSection key={r.app.namespace} reading={r} activity={state.data.activity} />)}
@@ -118,7 +133,7 @@ export function UpdatesView() {
   )
 }
 
-function Body({ data }: { data: UpdatesData }) {
+function Body({ data, onChanged }: { data: UpdatesData; onChanged: () => void }) {
   const { t } = useI18n()
   const summary = summarizeVersions(data.components)
   const reasons = disturbances(data.activity)
@@ -140,7 +155,6 @@ function Body({ data }: { data: UpdatesData }) {
               ? t('updates.version.mixed', { versions: summary.versions.join(', ') })
               : t('updates.version.single', { version: summary.dominant })}
           </p>
-          <p className="text-muted-foreground">{t('updates.available')}</p>
         </CardContent>
       </Card>
 
@@ -178,13 +192,13 @@ function Body({ data }: { data: UpdatesData }) {
           <ComponentsTable components={data.components} />
         </CardContent>
       </Card>
+      <OneClickUpdateCard releases={data.releases} requests={data.requests} reasons={reasons} onChanged={onChanged} />
       <PrepareCard
         components={data.components}
         activity={data.activity}
         gitopsUrl={config().updates.gitopsUrl}
         template={config().updates.prepareCommands}
       />
-
     </>
   )
 }
