@@ -13,7 +13,7 @@
 
 ## 1. Build and push the images
 
-Six images, six Dockerfiles, six target pairs (`make docker-images` builds all six). **`make docker-build` builds
+Seven images, seven Dockerfiles, seven target pairs (`make docker-images` builds all seven). **`make docker-build` builds
 the controller, not the UI** — it uses `Dockerfile.controller`. The UI is the
 unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 

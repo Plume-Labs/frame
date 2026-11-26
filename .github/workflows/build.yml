@@ -133,7 +133,7 @@ jobs:
   # published the one image the chart does not use, under the name a reader
   # would take for the operator.
   #
-  # The legs are the same six as the scan matrix below, which is what the
+  # The legs are the same seven as the scan matrix below, which is what the
   # release job gates on: an image is pushed only if it is also scanned.
   # Dockerfile.agent (the node-tuning DaemonSet) joined both matrices with the
   # chart publication, so every Dockerfile in the repository is published. The
@@ -169,6 +169,8 @@ jobs:
             dockerfile: Dockerfile.provisiond
           - name: agent
             dockerfile: Dockerfile.agent
+          - name: updater
+            dockerfile: Dockerfile.updater
 
     steps:
       - name: Clone the code
@@ -317,6 +319,8 @@ jobs:
             dockerfile: Dockerfile.provisiond
           - name: agent
             dockerfile: Dockerfile.agent
+          - name: updater
+            dockerfile: Dockerfile.updater
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

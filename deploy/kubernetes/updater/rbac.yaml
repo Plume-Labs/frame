@@ -1,0 +1,136 @@
+# The updater's whole grant. Its write surface on workloads is the image of the
+# named containers (internal/updater.DefaultWorkloads): patch on exactly these
+# objects, never create, never delete, in the three namespaces they live in.
+# Anything that widens this list is a change to what an update can do and wants
+# a reviewer who reads internal/updater/kube.go next to it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frame-updater
+  namespace: frame-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: frame-updater
+  namespace: frame-system
+rules:
+  # The requests it serves, and the releases it plans from. It writes the
+  # status of a request and nothing else of it; it never writes a release (its
+  # status.verified is the signature check's word, not the updater's).
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frameupdates]
+    verbs: [get, list, watch]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frameupdates/status]
+    verbs: [get, update, patch]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framereleases]
+    verbs: [get, list]
+  # The operator and provisiond: image of the named container only.
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [frame-controller-manager, frame-provisiond]
+    verbs: [get, patch]
+  # Leader election: one updater acts at a time.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [frame-updater.plume-labs.io]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frame-updater
+  namespace: frame-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: frame-updater
+subjects:
+  - kind: ServiceAccount
+    name: frame-updater
+    namespace: frame-system
+---
+# authd and the console's own Deployment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: frame-updater
+  namespace: cluster-control
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [cluster-control-auth, cluster-control-ui]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frame-updater
+  namespace: cluster-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: frame-updater
+subjects:
+  - kind: ServiceAccount
+    name: frame-updater
+    namespace: frame-system
+---
+# The node-tuning agent DaemonSet.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: frame-updater
+  namespace: kube-system
+rules:
+  - apiGroups: [apps]
+    resources: [daemonsets]
+    resourceNames: [frame-node-tuning-agent]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frame-updater
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: frame-updater
+subjects:
+  - kind: ServiceAccount
+    name: frame-updater
+    namespace: frame-system
+---
+# Read only, cluster-wide: "is work in flight". A job or an install in any
+# namespace is a reason to wait, so the updater counts them everywhere, not only
+# where the console happens to look. No watch, no write.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-updater-activity
+rules:
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framejobs, frameinstalls, frameosdreplacements]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: frame-updater-activity
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: frame-updater-activity
+subjects:
+  - kind: ServiceAccount
+    name: frame-updater
+    namespace: frame-system

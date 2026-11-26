@@ -15,6 +15,8 @@ IMG_UIPROXY ?= frame-uiproxy:latest
 # and serves them to a machine's BMC (Dockerfile.provisiond). Matches the
 # image name config/provisiond/deployment.yaml declares.
 IMG_PROVISIOND ?= frame-provisiond:latest
+# Image for frame-updater, which applies FrameUpdate requests (Dockerfile.updater).
+IMG_UPDATER ?= frame-updater:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -215,6 +217,14 @@ docker-build-provisiond: ## Build the frame-provisiond Docker image
 docker-push-provisiond: ## Push the frame-provisiond Docker image
 	$(CONTAINER_TOOL) push $(IMG_PROVISIOND)
 
+.PHONY: docker-build-updater
+docker-build-updater: ## Build the frame-updater Docker image
+	$(CONTAINER_TOOL) build -f Dockerfile.updater -t $(IMG_UPDATER) .
+
+.PHONY: docker-push-updater
+docker-push-updater: ## Push the frame-updater Docker image
+	$(CONTAINER_TOOL) push $(IMG_UPDATER)
+
 .PHONY: set-image-ui
 set-image-ui: ## Set UI image in development overlay (requires IMG_UI)
 	cd deploy/kubernetes/overlays/development && kustomize edit set image cluster-control=$(IMG_UI)
@@ -271,7 +281,7 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 	"$(GOVULNCHECK)" ./...
 
-# docker-images builds all six images the security targets below inspect, so
+# docker-images builds all seven images the security targets below inspect, so
 # `make sbom` and `make scan` work from a clean tree instead of failing on
 # whichever image happens not to be in the local daemon. uiproxy holds an
 # impersonation grant to the apiserver, so it gets the same coverage as the
@@ -279,12 +289,12 @@ vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 # attacker-reachable input (the Spec a build request carries) inside a
 # non-distroless base, which is its own reason not to be left out either.
 .PHONY: docker-images
-docker-images: docker-build docker-build-ui docker-build-authd docker-build-uiproxy docker-build-provisiond docker-build-agent ## Build all six images (controller, UI, authd, uiproxy, provisiond, agent).
+docker-images: docker-build docker-build-ui docker-build-authd docker-build-uiproxy docker-build-provisiond docker-build-agent docker-build-updater ## Build all seven images (controller, UI, authd, uiproxy, provisiond, agent, updater).
 
 .PHONY: sbom
 sbom: syft docker-images ## Write a CycloneDX SBOM for each image to dist/.
 	@mkdir -p dist
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)"; do \
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)" "updater:$(IMG_UPDATER)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "SBOM for $${name} ($${image})"; \
 		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
@@ -303,8 +313,8 @@ sbom: syft docker-images ## Write a CycloneDX SBOM for each image to dist/.
 # here first. Divergence between the two would make this target worse than
 # useless: it would say "clean" about a build CI is about to reject.
 .PHONY: scan
-scan: docker-images ## Scan all six images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)"; do \
+scan: docker-images ## Scan all seven images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)" "updater:$(IMG_UPDATER)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "=== $${name} ($${image}) ==="; \
 		$(CONTAINER_TOOL) run --rm \
